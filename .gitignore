@@ -16,7 +16,7 @@ __pycache__/
 
 # Variáveis de ambiente
 .env
-/auth/users.yaml
+#/auth/users.yaml
 
 # Arquivos de sistema
 .DS_Store
