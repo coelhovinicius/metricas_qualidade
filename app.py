@@ -41,7 +41,7 @@ def _configurar_pagina() -> None:
         page_title="Refuturiza · Indicadores de Qualidade",
         page_icon=str(icone_path) if icone_path.exists() else "📊",
         layout="wide",
-        initial_sidebar_state="expanded",
+        initial_sidebar_state="collapsed",
     )
 
 
