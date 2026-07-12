@@ -1,0 +1,29 @@
+# Segredos locais - NUNCA versionar (a chave real do cookie em produção vive
+# nos Secrets do Streamlit Cloud, não neste repositório)
+.streamlit/secrets.toml
+
+# Ambiente virtual Python
+.venv/
+venv/
+env/
+
+# Scripts
+scripts/
+
+# Cache Python
+__pycache__/
+*.pyc
+
+# Variáveis de ambiente
+.env
+/auth/users.yaml
+
+# Arquivos de sistema
+.DS_Store
+Thumbs.db
+
+# Pastas de arquivos desnecessários
+.csv/
+.prompts/
+*.zip
+sample_data/

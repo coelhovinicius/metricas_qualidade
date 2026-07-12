@@ -1,0 +1,7 @@
+streamlit>=1.38
+streamlit-authenticator==0.3.2
+bcrypt>=4.0
+pandas>=2.0
+plotly>=5.22
+chardet>=5.2
+PyYAML>=6.0
