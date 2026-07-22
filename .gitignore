@@ -27,3 +27,4 @@ Thumbs.db
 .prompts/
 *.zip
 sample_data/
+.ignore/
