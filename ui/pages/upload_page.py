@@ -1,4 +1,4 @@
-"""Página de importação do arquivo CSV/TXT e confirmação do mapeamento de colunas."""
+"""Página de importação do arquivo CSV/TXT (ou busca automática no Azure DevOps) e confirmação do mapeamento de colunas."""
 
 from __future__ import annotations
 
@@ -6,8 +6,9 @@ import time
 
 import streamlit as st
 
+from core.azure_devops_client import AzureDevOpsError, buscar_work_items_da_query, configuracao_disponivel
 from core.column_mapper import MapeamentoColunas, detectar_mapeamento
-from core.data_loader import DataLoadError, carregar_arquivo
+from core.data_loader import DataLoadError, ResultadoCarga, carregar_arquivo
 from ui.components import action_button, finish_action, loading_overlay, render_header
 from utils.session import resetar_dados_importados
 
@@ -25,6 +26,9 @@ CAMPOS_MAPEAVEIS = [
 
 CHAVE_CAMPOS_PERSONALIZADOS = "campos_personalizados_temp"
 
+OPCAO_ORIGEM_MANUAL = "Enviar arquivo (.csv/.txt)"
+OPCAO_ORIGEM_AZURE = "Buscar automaticamente do Azure DevOps"
+
 
 def _opcao_coluna(colunas: list[str], atual: str | None) -> list[str]:
     return ["— não mapeado —"] + colunas
@@ -33,9 +37,30 @@ def _opcao_coluna(colunas: list[str], atual: str | None) -> list[str]:
 def render_upload_page() -> None:
     render_header(
         titulo="Importar dados de testes",
-        subtitulo="Envie um arquivo .csv ou .txt para gerar os indicadores automaticamente.",
+        subtitulo="Envie um arquivo .csv/.txt ou busque automaticamente do Azure DevOps.",
     )
 
+    origem = st.radio(
+        "Como deseja importar os dados?",
+        options=[OPCAO_ORIGEM_MANUAL, OPCAO_ORIGEM_AZURE],
+        key="origem_importacao",
+        horizontal=True,
+    )
+
+    if origem == OPCAO_ORIGEM_MANUAL:
+        _renderizar_importacao_manual()
+    else:
+        _renderizar_importacao_azure_devops()
+
+    if st.session_state.get("erro_carga"):
+        st.error(st.session_state["erro_carga"])
+
+    resultado = st.session_state.get("resultado_carga")
+    if resultado is not None:
+        _renderizar_confirmacao_mapeamento(resultado)
+
+
+def _renderizar_importacao_manual() -> None:
     arquivo_enviado = st.file_uploader(
         "Arquivo de testes (.csv ou .txt) — limite 20MB",
         type=["csv", "txt"],
@@ -77,12 +102,63 @@ def render_upload_page() -> None:
             finish_action("btn_processar_arquivo")
             st.rerun()
 
-    if st.session_state.get("erro_carga"):
-        st.error(st.session_state["erro_carga"])
 
-    resultado = st.session_state.get("resultado_carga")
-    if resultado is not None:
-        _renderizar_confirmacao_mapeamento(resultado)
+def _renderizar_importacao_azure_devops() -> None:
+    if not configuracao_disponivel():
+        st.warning(
+            "A busca automática ainda não está configurada. Adicione a seção "
+            "`[azure_devops]` (organization, project, query_id, pat) nos "
+            "**Secrets** do Streamlit para habilitar esta opção. Enquanto isso, "
+            "use a importação manual do arquivo."
+        )
+        return
+
+    st.caption(
+        "Busca os work items da mesma query salva usada hoje para o export manual, "
+        "direto da API do Azure DevOps — sem precisar baixar e subir o CSV."
+    )
+
+    processar = action_button(
+        "Baixar relatório atualizado",
+        key="btn_baixar_azure_devops",
+        help="Busca os dados mais recentes da query configurada no Azure DevOps.",
+    )
+
+    if processar:
+        with loading_overlay("Buscando dados no Azure DevOps, aguarde..."):
+            try:
+                resetar_dados_importados()
+                st.session_state[CHAVE_CAMPOS_PERSONALIZADOS] = []
+                dataframe = buscar_work_items_da_query()
+
+                if dataframe.empty:
+                    raise AzureDevOpsError(
+                        "A query configurada não retornou nenhum work item. Confira o "
+                        "query_id em [azure_devops] nos Secrets."
+                    )
+
+                resultado = ResultadoCarga(
+                    dataframe=dataframe,
+                    encoding_detectado="—",
+                    delimitador_detectado="—",
+                    nome_arquivo="Azure DevOps (consulta automática)",
+                    total_linhas=dataframe.shape[0],
+                    total_colunas=dataframe.shape[1],
+                )
+                mapeamento = detectar_mapeamento(dataframe)
+
+                st.session_state["resultado_carga"] = resultado
+                st.session_state["dataframe_bruto"] = dataframe
+                st.session_state["mapeamento_colunas"] = mapeamento
+                st.session_state["mapeamento_confirmado"] = False
+
+                time.sleep(0.3)
+            except AzureDevOpsError as erro:
+                st.session_state["erro_carga"] = str(erro)
+            else:
+                st.session_state["erro_carga"] = None
+        finish_action("btn_baixar_azure_devops")
+        st.rerun()
 
 
 def _renderizar_confirmacao_mapeamento(resultado) -> None:

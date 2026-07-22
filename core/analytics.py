@@ -47,6 +47,35 @@ class IndicadoresBacklogAberto:
     mais_365_dias: int
 
 
+ROTULO_VAZIO_PADRAO = "Não atribuído(a)"
+
+# Campos "de identidade" (usados para agrupar/colorir gráficos) cujos valores
+# vazios ganham o rótulo amigável acima em vez de aparecer como célula em
+# branco/NaN em tabelas e gráficos. Status fica de fora de propósito: já tem
+# seu próprio rótulo estabelecido ("Não informado", aplicado em
+# `distribuicao_status_bruto`).
+_CAMPOS_ROTULAVEIS = ("projeto", "responsavel", "tipo_teste", "severidade")
+
+_VALORES_CONSIDERADOS_VAZIOS = {"", "nan", "none", "null", "nat", "<na>"}
+
+
+def _rotular_valores_vazios(serie: pd.Series, rotulo: str = ROTULO_VAZIO_PADRAO) -> pd.Series:
+    """
+    Substitui nulos (e variações textuais de "vazio", ex.: célula em branco
+    que alguma etapa anterior tenha convertido para a string "nan") por um
+    rótulo amigável - assim tabelas e gráficos nunca mostram "NaN"/"nan" cru.
+    """
+
+    def _rotular(valor: object) -> object:
+        if pd.isna(valor):
+            return rotulo
+        if isinstance(valor, str) and valor.strip().lower() in _VALORES_CONSIDERADOS_VAZIOS:
+            return rotulo
+        return valor
+
+    return serie.apply(_rotular)
+
+
 def preparar_dados(df: pd.DataFrame, mapeamento: MapeamentoColunas) -> pd.DataFrame:
     """
     Aplica as limpezas necessárias antes de calcular qualquer indicador:
@@ -54,6 +83,8 @@ def preparar_dados(df: pd.DataFrame, mapeamento: MapeamentoColunas) -> pd.DataFr
         - Simplifica a coluna de projeto quando ela vem de uma hierarquia de
           Area Path ou de uma coluna com múltiplos valores (ex.: Tags usada
           como aproximação de projeto);
+        - Rotula valores vazios de Projeto/Responsável/Tipo de Teste/
+          Severidade como "Não atribuído(a)" (em vez de célula em branco);
         - Converte colunas de data para o tipo data (sem hora);
         - Adiciona `__status_binario_reconhecido__` indicando se a coluna de
           status contém vocabulário Passou/Falhou/Planejado reconhecível;
@@ -67,6 +98,11 @@ def preparar_dados(df: pd.DataFrame, mapeamento: MapeamentoColunas) -> pd.DataFr
 
     if mapeamento.projeto and mapeamento.projeto in df.columns:
         df[mapeamento.projeto] = df[mapeamento.projeto].apply(simplificar_valor_projeto)
+
+    for campo in _CAMPOS_ROTULAVEIS:
+        coluna = getattr(mapeamento, campo)
+        if coluna and coluna in df.columns:
+            df[coluna] = _rotular_valores_vazios(df[coluna])
 
     for coluna_data in (mapeamento.data_planejada, mapeamento.data_execucao, mapeamento.data_criacao):
         if coluna_data and coluna_data in df.columns:

@@ -68,10 +68,15 @@ def _limpar_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     df.columns = [str(coluna).strip() for coluna in df.columns]
     # Remove colunas fantasma geradas por delimitadores no fim da linha
     df = df.loc[:, ~df.columns.str.match(r"^Unnamed(:.*)?$", na=False)]
-    # Remove espaços extras em colunas de texto
+    # Remove espaços extras em colunas de texto - preservando valores
+    # realmente vazios como NaN de verdade (em vez da string "nan"). Um
+    # `.astype(str)` direto na coluna inteira converteria célula vazia em
+    # texto "nan" em algumas versões do pandas, o que faria esse valor
+    # deixar de ser reconhecido como nulo mais adiante (ex.: no rótulo
+    # "Não atribuído(a)" aplicado em `core.analytics.preparar_dados`).
     colunas_texto = df.select_dtypes(include="object").columns
     for coluna in colunas_texto:
-        df[coluna] = df[coluna].astype(str).str.strip()
+        df[coluna] = df[coluna].apply(lambda valor: valor if pd.isna(valor) else str(valor).strip())
     return df.reset_index(drop=True)
 
 

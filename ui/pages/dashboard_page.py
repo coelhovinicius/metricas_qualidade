@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Optional
 
 import pandas as pd
@@ -64,22 +65,29 @@ def _aplicar_filtros_sidebar(
             data_min = datas_validas.min().date()
             data_max = datas_validas.max().date()
 
+            # Período padrão na primeira visualização (antes de qualquer
+            # "Confirmar intervalo" do usuário): do dia atual - a data em que
+            # o arquivo está sendo consultado/importado - até um mês antes,
+            # sempre dentro dos limites reais do arquivo importado.
+            fim_padrao = min(max(datetime.now().date(), data_min), data_max)
+            inicio_padrao = max(data_min, (pd.Timestamp(fim_padrao) - pd.DateOffset(months=1)).date())
+
             st.sidebar.markdown("### Período")
             col_de, col_ate = st.sidebar.columns(2)
             entrada_inicio = col_de.date_input(
-                "De", value=st.session_state.get("filtro_data_inicio", data_min),
+                "De", value=st.session_state.get("filtro_data_inicio", inicio_padrao),
                 min_value=data_min, max_value=data_max, key="input_data_inicio",
             )
             entrada_fim = col_ate.date_input(
-                "Até", value=st.session_state.get("filtro_data_fim", data_max),
+                "Até", value=st.session_state.get("filtro_data_fim", fim_padrao),
                 min_value=data_min, max_value=data_max, key="input_data_fim",
             )
             if st.sidebar.button("Confirmar intervalo", use_container_width=True, type="primary", key="btn_confirmar_intervalo"):
                 st.session_state["filtro_data_inicio"] = entrada_inicio
                 st.session_state["filtro_data_fim"] = entrada_fim
 
-            inicio_aplicado = st.session_state.get("filtro_data_inicio", data_min)
-            fim_aplicado = st.session_state.get("filtro_data_fim", data_max)
+            inicio_aplicado = st.session_state.get("filtro_data_inicio", inicio_padrao)
+            fim_aplicado = st.session_state.get("filtro_data_fim", fim_padrao)
             df_filtrado = analytics.filtrar_por_intervalo_datas(df_filtrado, coluna_data, inicio_aplicado, fim_aplicado)
 
     # ---- Filtros (Projeto / Tipos de Teste / Status) ----
