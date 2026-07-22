@@ -11,7 +11,9 @@ campos marcados como "— não mapeado —" nunca entram no cálculo dos gráfic
 
 from __future__ import annotations
 
+import unicodedata
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Optional
 
 import pandas as pd
@@ -21,6 +23,7 @@ from core.column_mapper import (
     eh_status_binario_reconhecivel,
     extrair_nome_de_email,
     normalizar_status,
+    simplificar_valor_projeto,
 )
 
 
@@ -34,10 +37,23 @@ class IndicadoresGerais:
     taxa_sucesso: Optional[float]  # percentual sobre executados (passou+falhou)
 
 
+@dataclass
+class IndicadoresBacklogAberto:
+    total_abertos: int
+    idade_media_dias: Optional[float]
+    idade_mediana_dias: Optional[float]
+    mais_90_dias: int
+    mais_180_dias: int
+    mais_365_dias: int
+
+
 def preparar_dados(df: pd.DataFrame, mapeamento: MapeamentoColunas) -> pd.DataFrame:
     """
     Aplica as limpezas necessárias antes de calcular qualquer indicador:
         - Extrai apenas o nome da coluna de responsável (remove "<email>");
+        - Simplifica a coluna de projeto quando ela vem de uma hierarquia de
+          Area Path ou de uma coluna com múltiplos valores (ex.: Tags usada
+          como aproximação de projeto);
         - Converte colunas de data para o tipo data (sem hora);
         - Adiciona `__status_binario_reconhecido__` indicando se a coluna de
           status contém vocabulário Passou/Falhou/Planejado reconhecível;
@@ -48,6 +64,9 @@ def preparar_dados(df: pd.DataFrame, mapeamento: MapeamentoColunas) -> pd.DataFr
 
     if mapeamento.responsavel and mapeamento.responsavel in df.columns:
         df[mapeamento.responsavel] = df[mapeamento.responsavel].apply(extrair_nome_de_email)
+
+    if mapeamento.projeto and mapeamento.projeto in df.columns:
+        df[mapeamento.projeto] = df[mapeamento.projeto].apply(simplificar_valor_projeto)
 
     for coluna_data in (mapeamento.data_planejada, mapeamento.data_execucao, mapeamento.data_criacao):
         if coluna_data and coluna_data in df.columns:
@@ -295,3 +314,143 @@ def construir_grafico_personalizado(
 
     resultado = resultado.rename(columns={coluna_x: "Categoria"})
     return resultado.sort_values("Valor", ascending=False)
+
+
+# ---------------------------------------------------------------------------
+# Backlog aberto: há quanto tempo os itens que ainda não chegaram a um estado
+# terminal (Finalizado/Closed/Done/...) estão parados. Pensado especialmente
+# para exports de ferramentas de fluxo de trabalho (ex.: Azure DevOps), onde
+# o status não é um Passou/Falhou tradicional e "Taxa de Sucesso" não se
+# aplica - mas "há quanto tempo o backlog está parado" é um indicador tão ou
+# mais relevante da saúde do processo de QA.
+# ---------------------------------------------------------------------------
+
+_PALAVRAS_ESTADO_TERMINAL = {
+    "finalizado",
+    "finalizada",
+    "concluido",
+    "concluida",
+    "closed",
+    "fechado",
+    "fechada",
+    "done",
+    "completo",
+    "completa",
+    "resolvido",
+    "resolvida",
+    "resolved",
+    "cancelado",
+    "cancelada",
+    "cancelled",
+    "canceled",
+    "rejeitado",
+    "rejeitada",
+    "rejected",
+    "aprovado",
+    "aprovada",
+    "approved",
+    "removido",
+    "removida",
+}
+
+
+def _normalizar_texto_simples(valor: object) -> str:
+    texto = str(valor).strip().lower()
+    return unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode("ascii")
+
+
+def _estado_e_terminal(valor: object) -> bool:
+    texto = _normalizar_texto_simples(valor)
+    return any(palavra in texto for palavra in _PALAVRAS_ESTADO_TERMINAL)
+
+
+def _mascara_itens_em_aberto(df: pd.DataFrame, mapeamento: MapeamentoColunas) -> Optional[pd.Series]:
+    """
+    True para as linhas cujo status ainda não chegou a um estado terminal.
+
+    - Status binário reconhecível (Passou/Falhou/Planejado): "aberto" é tudo
+      que ainda não é Passou nem Falhou (ou seja, Planejado/Outro).
+    - Status como fluxo de trabalho livre (ex.: New/Ready/Design/Finalizado/
+      Closed do Azure DevOps): "aberto" é tudo cujo valor bruto não contém
+      vocabulário reconhecido de estado terminal.
+    """
+    if not mapeamento.status or mapeamento.status not in df.columns:
+        return None
+
+    if status_e_binario(df):
+        return ~df["__status_normalizado__"].isin(["Passou", "Falhou"])
+
+    status_bruto = df["__status_bruto__"] if "__status_bruto__" in df.columns else df[mapeamento.status]
+    return ~status_bruto.apply(_estado_e_terminal)
+
+
+def calcular_backlog_aberto(
+    df: pd.DataFrame, mapeamento: MapeamentoColunas
+) -> Optional[IndicadoresBacklogAberto]:
+    """Estatísticas de idade (em dias, a partir da coluna de data principal) dos itens ainda em aberto."""
+    coluna_data = mapeamento.coluna_data_principal()
+    if not coluna_data or coluna_data not in df.columns:
+        return None
+
+    mascara_aberto = _mascara_itens_em_aberto(df, mapeamento)
+    if mascara_aberto is None:
+        return None
+
+    datas = pd.to_datetime(df[coluna_data], errors="coerce")
+    indices_abertos = df.index[mascara_aberto & datas.notna()]
+
+    if len(indices_abertos) == 0:
+        return IndicadoresBacklogAberto(0, None, None, 0, 0, 0)
+
+    hoje = pd.Timestamp(datetime.now().date())
+    idade_dias = (hoje - datas.loc[indices_abertos]).dt.days
+
+    return IndicadoresBacklogAberto(
+        total_abertos=int(len(indices_abertos)),
+        idade_media_dias=round(float(idade_dias.mean()), 1),
+        idade_mediana_dias=float(idade_dias.median()),
+        mais_90_dias=int((idade_dias > 90).sum()),
+        mais_180_dias=int((idade_dias > 180).sum()),
+        mais_365_dias=int((idade_dias > 365).sum()),
+    )
+
+
+def ranking_itens_mais_antigos_abertos(
+    df: pd.DataFrame, mapeamento: MapeamentoColunas, top_n: int = 15
+) -> Optional[pd.DataFrame]:
+    """Tabela com os itens em aberto há mais tempo, do mais antigo para o mais recente."""
+    coluna_data = mapeamento.coluna_data_principal()
+    if not coluna_data or coluna_data not in df.columns:
+        return None
+
+    mascara_aberto = _mascara_itens_em_aberto(df, mapeamento)
+    if mascara_aberto is None:
+        return None
+
+    datas = pd.to_datetime(df[coluna_data], errors="coerce")
+    trabalho = df.loc[mascara_aberto & datas.notna()].copy()
+    if trabalho.empty:
+        return pd.DataFrame(columns=["Status", "Responsável", "Idade (dias)"])
+
+    hoje = pd.Timestamp(datetime.now().date())
+    trabalho["Idade (dias)"] = (hoje - datas.loc[trabalho.index]).dt.days
+    trabalho["Status"] = (
+        trabalho["__status_bruto__"] if "__status_bruto__" in trabalho.columns else trabalho[mapeamento.status]
+    )
+    trabalho["Responsável"] = (
+        trabalho[mapeamento.responsavel]
+        if mapeamento.responsavel and mapeamento.responsavel in trabalho.columns
+        else "—"
+    )
+
+    colunas_saida = ["Status", "Responsável", "Idade (dias)"]
+    if mapeamento.projeto and mapeamento.projeto in trabalho.columns:
+        trabalho["Projeto"] = trabalho[mapeamento.projeto]
+        colunas_saida = ["Projeto"] + colunas_saida
+
+    return (
+        trabalho[colunas_saida]
+        .sort_values("Idade (dias)", ascending=False)
+        .head(top_n)
+        .reset_index(drop=True)
+    )

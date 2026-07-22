@@ -111,15 +111,27 @@ def _selecionar_tipo_grafico(chave: str, opcoes: list[str] = None) -> str:
     return st.selectbox("Tipo de gráfico", opcoes, key=f"tipo_grafico_{chave}")
 
 
+def _cores_por_posicao(quantidade: int) -> list[str]:
+    """Cicla pela paleta de gráficos, uma cor por posição/categoria (não por valor)."""
+    return [PALETA_GRAFICOS[indice % len(PALETA_GRAFICOS)] for indice in range(quantidade)]
+
+
 def _plotar(df: pd.DataFrame, tipo: str, x: str, y: str, chave: str, cor: Optional[str] = None) -> None:
     cor_discreta = PALETA_STATUS if cor == "__status_bruto__" and set(df[cor].unique()) <= set(PALETA_STATUS) else None
 
     if tipo == "Barras":
         fig = px.bar(df, x=x, y=y, color=cor, color_discrete_sequence=PALETA_GRAFICOS,
                       color_discrete_map=cor_discreta, text_auto=True)
+        if cor is None:
+            # Sem uma segunda dimensão pra agrupar/empilhar: colore cada barra por
+            # posição (categoria), sem criar legenda nova - é a mesma série, só
+            # com uma cor por categoria em vez de uma cor única pra todo o gráfico.
+            fig.update_traces(marker_color=_cores_por_posicao(len(df)))
     elif tipo == "Barras Horizontais":
         fig = px.bar(df, x=y, y=x, color=cor, orientation="h", color_discrete_sequence=PALETA_GRAFICOS,
                       color_discrete_map=cor_discreta, text_auto=True)
+        if cor is None:
+            fig.update_traces(marker_color=_cores_por_posicao(len(df)))
     elif tipo == "Pizza":
         fig = px.pie(df, names=x, values=y, color=cor, color_discrete_sequence=PALETA_GRAFICOS,
                       color_discrete_map=cor_discreta)
@@ -207,6 +219,31 @@ def render_dashboard_page() -> None:
             else:
                 resumo_status = analytics.distribuicao_status_bruto(df_filtrado, mapeamento)
             _plotar(resumo_status, tipo_status, x="Status", y="Quantidade", chave="status_geral")
+        st.divider()
+
+    # ------------------------------------------------- Backlog aberto (idade)
+    indicadores_backlog = analytics.calcular_backlog_aberto(df_filtrado, mapeamento)
+    if indicadores_backlog is not None and indicadores_backlog.total_abertos > 0:
+        st.markdown("**Backlog Aberto — Tempo Parado**")
+        st.caption(
+            "Itens que ainda não chegaram a um estado terminal (ex.: Finalizado/Closed/Done), "
+            "e há quanto tempo estão parados desde a data de referência do item."
+        )
+        idade_media_texto = (
+            f"{indicadores_backlog.idade_media_dias:.0f} dias"
+            if indicadores_backlog.idade_media_dias is not None
+            else "—"
+        )
+        render_kpi_row([
+            ("Itens em Aberto", f"{indicadores_backlog.total_abertos:,}".replace(",", "."), None, True),
+            ("Idade Média", idade_media_texto, None, False),
+            ("Parados há +90 dias", f"{indicadores_backlog.mais_90_dias:,}".replace(",", "."), None, False),
+            ("Parados há +365 dias", f"{indicadores_backlog.mais_365_dias:,}".replace(",", "."), None, False),
+        ])
+        df_mais_antigos = analytics.ranking_itens_mais_antigos_abertos(df_filtrado, mapeamento)
+        if df_mais_antigos is not None and not df_mais_antigos.empty:
+            with st.expander("Ver os itens em aberto há mais tempo"):
+                st.dataframe(df_mais_antigos, use_container_width=True)
         st.divider()
 
     # ------------------------------------------ Planejamento vs Efetivado

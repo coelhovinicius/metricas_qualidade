@@ -15,8 +15,26 @@ BACKGROUND_COLOR = "#FAF6F0"
 SECONDARY_BACKGROUND_COLOR = "#FFFFFF"
 TEXT_COLOR = "#1A1A1A"
 
-# Paleta derivada da identidade visual (usada nos gráficos)
-PALETA_GRAFICOS = ["#F15A24", "#2E7D5B", "#E0A93E", "#4A4A4A", "#C1440E", "#6FA98A"]
+# Paleta categórica usada nos gráficos (Testes por Projeto, Tipo de Teste,
+# Severidade, Responsáveis, Treemap, etc.). 8 matizes distintos, com a laranja
+# da marca na liderança (mantém a identidade visual nos gráficos de série
+# única) seguida de azul, água, amarelo, magenta, verde, violeta e vermelho -
+# ordem validada para diferenciação em daltonismo (protanopia/deuteranopia)
+# e leitura em visão normal, então NÃO reordene os slots livremente: a ordem
+# em si é o que garante que cores vizinhas no gráfico não fiquem parecidas.
+# Água, amarelo e magenta têm contraste mais baixo contra fundo branco -
+# por isso os gráficos de barra usam rótulos de valor visíveis (text_auto) e
+# sempre existe a tabela de dados detalhados como alternativa de leitura.
+PALETA_GRAFICOS = [
+    "#F15A24",  # laranja (marca)
+    "#2a78d6",  # azul
+    "#1baf7a",  # água
+    "#eda100",  # amarelo
+    "#e87ba4",  # magenta
+    "#008300",  # verde
+    "#4a3aa7",  # violeta
+    "#e34948",  # vermelho
+]
 PALETA_STATUS = {
     "Passou": "#2E7D5B",
     "Falhou": "#F15A24",

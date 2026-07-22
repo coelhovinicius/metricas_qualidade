@@ -30,8 +30,24 @@ import pandas as pd
 
 # Palavras-chave (já normalizadas: minúsculas e sem acento) associadas a cada
 # campo canônico que a aplicação sabe interpretar.
+#
+# "projeto" e "severidade" incluem também termos em inglês (area path, team
+# project, severity, priority) porque exports do Azure DevOps costumam trazer
+# os nomes de campo nesse idioma por padrão, mesmo em organizações que operam
+# em português no restante da interface.
 PALAVRAS_CHAVE: dict[str, list[str]] = {
-    "projeto": ["projeto", "sistema", "produto", "modulo", "aplicacao", "squad", "app"],
+    "projeto": [
+        "projeto",
+        "sistema",
+        "produto",
+        "modulo",
+        "aplicacao",
+        "squad",
+        "app",
+        "area path",
+        "team project",
+        "project",
+    ],
     "status": ["status", "resultado", "situacao", "conclusao", "state"],
     "data_planejada": ["data planejada", "planejamento", "data prevista", "previsto", "data plan"],
     "data_execucao": [
@@ -59,7 +75,7 @@ PALAVRAS_CHAVE: dict[str, list[str]] = {
     ],
     "responsavel": ["responsavel", "executor", "tester", "analista", "assigned to", "atribuido"],
     "caso_teste": ["caso de teste", "id teste", "test case", "cenario", "caso teste", "id caso", "id"],
-    "severidade": ["severidade", "prioridade", "criticidade"],
+    "severidade": ["severidade", "prioridade", "criticidade", "severity", "priority"],
 }
 
 # Palavras curtas (<=3 caracteres) só devem "casar" como token isolado, para
@@ -91,6 +107,47 @@ def extrair_nome_de_email(valor: object) -> object:
     texto = str(valor)
     correspondencia = _PADRAO_NOME_EMAIL.match(texto)
     return correspondencia.group(1) if correspondencia else texto
+
+
+def extrair_primeiro_valor_de_lista(valor: object, separador: str = ";") -> object:
+    """Para colunas com múltiplos valores por linha (ex.: Tags "Legado; Melhoria"), retorna só o primeiro."""
+    if pd.isna(valor):
+        return valor
+    texto = str(valor)
+    partes = [parte.strip() for parte in texto.split(separador) if parte.strip()]
+    return partes[0] if partes else texto
+
+
+def simplificar_valor_projeto(valor: object) -> object:
+    """
+    Normaliza valores usados como "Projeto" quando a coluna de origem não é um
+    campo simples de projeto:
+        - Hierarquia de Area Path do Azure DevOps
+          ("Produto e Tecnologia\\Modulo") -> usa apenas o último nível
+          ("Modulo"), que é o que de fato distingue um item do outro;
+        - Múltiplos valores separados por ";" (ex.: coluna Tags usada como
+          aproximação de projeto) -> usa o primeiro valor.
+
+    Colunas de projeto "normais" (um valor simples por linha, sem "\\" nem
+    ";") passam por aqui sem qualquer alteração.
+    """
+    if pd.isna(valor):
+        return valor
+    texto = str(valor).strip()
+    if not texto:
+        return valor
+
+    if "\\" in texto:
+        partes = [parte.strip() for parte in texto.split("\\") if parte.strip()]
+        if partes:
+            texto = partes[-1]
+
+    if ";" in texto:
+        partes = [parte.strip() for parte in texto.split(";") if parte.strip()]
+        if partes:
+            texto = partes[0]
+
+    return texto
 
 
 @dataclass
@@ -167,6 +224,29 @@ def detectar_mapeamento(df: pd.DataFrame) -> MapeamentoColunas:
             setattr(mapeamento, campo, melhor_coluna)
             mapeamento.confianca[campo] = round(melhor_score, 2)
             colunas_ja_usadas.add(melhor_coluna)
+
+    # Fallback: quando não existe uma coluna explícita de Projeto/Area Path/
+    # Team Project, mas existe uma coluna "Tags" com mais de um valor
+    # distinto, ela é usada como aproximação de "Projeto"/módulo - comum em
+    # exports do Azure DevOps sem Area Path populado de forma útil. Fica
+    # marcado com confiança baixa (0.1), e o usuário sempre pode desfazer na
+    # tela de confirmação do mapeamento se não fizer sentido para o arquivo.
+    if mapeamento.projeto is None:
+        coluna_tags = next(
+            (
+                coluna_original
+                for coluna_original, coluna_normalizada in colunas_normalizadas.items()
+                if coluna_normalizada == "tags" and coluna_original not in colunas_ja_usadas
+            ),
+            None,
+        )
+        if coluna_tags is not None:
+            valores = df[coluna_tags].dropna().astype(str).str.strip()
+            valores = valores[valores != ""]
+            if valores.nunique() >= 2:
+                mapeamento.projeto = coluna_tags
+                mapeamento.confianca["projeto"] = 0.1
+                colunas_ja_usadas.add(coluna_tags)
 
     return mapeamento
 
