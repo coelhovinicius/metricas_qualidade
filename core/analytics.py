@@ -490,3 +490,64 @@ def ranking_itens_mais_antigos_abertos(
         .head(top_n)
         .reset_index(drop=True)
     )
+
+
+def bugs_abertos_vs_solucionados(df: pd.DataFrame, mapeamento: MapeamentoColunas) -> Optional[pd.DataFrame]:
+    """
+    Evolução acumulada de bugs "ainda abertos" vs. "já solucionados", por
+    semana de criação.
+
+    Importante sobre a leitura deste gráfico: a maioria dos exports (ex.:
+    Azure DevOps) não traz uma data de resolução/fechamento - só a data de
+    criação. Por isso, "Já Solucionados" reflete o status ATUAL de cada bug
+    (se hoje ele está num estado terminal), não a data exata em que foi
+    resolvido no passado. Ou seja: mostra "dos bugs abertos até a semana X,
+    quantos já estão resolvidos hoje" - uma visão por coorte de criação, não
+    um retrato histórico exato de cada data passada (isso exigiria uma
+    coluna de data de resolução/fechamento, que pode ser adicionada se o
+    arquivo importado passar a trazê-la).
+
+    Requer tipo_teste mapeado (pra isolar os itens de bug) e status mapeado
+    (pra saber o que é terminal); sem os dois, retorna None.
+    """
+    coluna_data = mapeamento.coluna_data_principal()
+    if not coluna_data or coluna_data not in df.columns:
+        return None
+    if not mapeamento.tipo_teste or mapeamento.tipo_teste not in df.columns:
+        return None
+
+    bugs = df[df[mapeamento.tipo_teste].astype(str).str.contains("bug", case=False, na=False)].copy()
+    if bugs.empty:
+        return None
+
+    mascara_aberto = _mascara_itens_em_aberto(bugs, mapeamento)
+    if mascara_aberto is None:
+        return None
+
+    datas = pd.to_datetime(bugs[coluna_data], errors="coerce")
+    bugs = bugs.loc[datas.notna()].copy()
+    if bugs.empty:
+        return None
+    mascara_aberto = mascara_aberto.loc[bugs.index]
+
+    bugs["__data__"] = datas.loc[bugs.index]
+    bugs["__semana__"] = bugs["__data__"].dt.to_period("W").dt.start_time
+    bugs["__resolvido_hoje__"] = (~mascara_aberto).astype(int)
+
+    por_semana = (
+        bugs.groupby("__semana__")
+        .agg(criados=("__resolvido_hoje__", "size"), resolvidos=("__resolvido_hoje__", "sum"))
+        .sort_index()
+    )
+    por_semana["criados_acumulado"] = por_semana["criados"].cumsum()
+    por_semana["resolvidos_acumulado"] = por_semana["resolvidos"].cumsum()
+    por_semana["abertos_acumulado"] = por_semana["criados_acumulado"] - por_semana["resolvidos_acumulado"]
+
+    resultado = por_semana.reset_index().rename(columns={"__semana__": "Semana"})
+    return resultado.rename(
+        columns={
+            "criados_acumulado": "Bugs Criados (acumulado)",
+            "resolvidos_acumulado": "Já Solucionados (situação atual)",
+            "abertos_acumulado": "Ainda Abertos (situação atual)",
+        }
+    )[["Semana", "Bugs Criados (acumulado)", "Já Solucionados (situação atual)", "Ainda Abertos (situação atual)"]]

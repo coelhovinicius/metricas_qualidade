@@ -7,6 +7,7 @@ from typing import Optional
 
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 
 from core import analytics
@@ -14,7 +15,7 @@ from core.column_mapper import MapeamentoColunas
 from ui.components import action_button, finish_action, loading_overlay, render_header, render_kpi_row
 from ui.theme import PALETA_GRAFICOS, PALETA_STATUS
 
-TIPOS_GRAFICO_PADRAO = ["Barras", "Barras Horizontais", "Pizza", "Rosca", "Linha", "Área", "Treemap"]
+TIPOS_GRAFICO_PADRAO = ["Barras", "Barras Horizontais", "Pizza", "Rosca", "Linha", "Área", "Treemap", "Pareto"]
 
 
 def _colunas_disponiveis_para_grafico(
@@ -124,6 +125,46 @@ def _cores_por_posicao(quantidade: int) -> list[str]:
     return [PALETA_GRAFICOS[indice % len(PALETA_GRAFICOS)] for indice in range(quantidade)]
 
 
+def _construir_grafico_pareto(df: pd.DataFrame, x: str, y: str) -> go.Figure:
+    """
+    Gráfico de Pareto: barras com o valor de cada categoria (mantendo a ordem
+    em que os dados já chegam - todas as funções de indicador já entregam em
+    ordem decrescente) + linha de percentual acumulado num eixo secundário
+    (0-100%), com uma referência pontilhada em 80% (o "80/20" da análise de
+    Pareto). É a exceção deliberada à regra de "nunca dois eixos Y": aqui o
+    segundo eixo é sempre um percentual acumulado 0-100%, uma convenção
+    padrão desse tipo de gráfico, não duas métricas arbitrárias em escalas
+    diferentes.
+    """
+    dados = df.reset_index(drop=True)
+    total = dados[y].sum()
+    percentual_acumulado = (dados[y].cumsum() / total * 100) if total else dados[y].cumsum().astype(float)
+
+    fig = go.Figure()
+    fig.add_bar(
+        x=dados[x], y=dados[y], name=y,
+        marker_color=_cores_por_posicao(len(dados)),
+        text=dados[y], textposition="outside",
+    )
+    fig.add_scatter(
+        x=dados[x], y=percentual_acumulado, name="% acumulado",
+        mode="lines+markers", yaxis="y2",
+        line=dict(color=PALETA_GRAFICOS[7], width=2),
+        marker=dict(size=6, color=PALETA_GRAFICOS[7]),
+    )
+    fig.update_layout(
+        yaxis=dict(title=y),
+        yaxis2=dict(title="% acumulado", overlaying="y", side="right", range=[0, 105], ticksuffix="%"),
+        shapes=[
+            dict(
+                type="line", xref="paper", x0=0, x1=1, yref="y2", y0=80, y1=80,
+                line=dict(color="#8C8C8C", width=1, dash="dot"),
+            )
+        ],
+    )
+    return fig
+
+
 def _plotar(df: pd.DataFrame, tipo: str, x: str, y: str, chave: str, cor: Optional[str] = None) -> None:
     cor_discreta = PALETA_STATUS if cor == "__status_bruto__" and set(df[cor].unique()) <= set(PALETA_STATUS) else None
 
@@ -151,6 +192,8 @@ def _plotar(df: pd.DataFrame, tipo: str, x: str, y: str, chave: str, cor: Option
                        color_discrete_map=cor_discreta)
     elif tipo == "Treemap":
         fig = px.treemap(df, path=[x], values=y, color=x, color_discrete_sequence=PALETA_GRAFICOS)
+    elif tipo == "Pareto":
+        fig = _construir_grafico_pareto(df, x, y)
     else:  # Linha
         fig = px.line(df, x=x, y=y, color=cor, color_discrete_sequence=PALETA_GRAFICOS,
                        color_discrete_map=cor_discreta, markers=True)
@@ -293,7 +336,7 @@ def render_dashboard_page() -> None:
         col_grafico, col_config = st.columns([3, 1])
         with col_config:
             st.markdown("**Distribuição por Tipo de Teste**")
-            tipo_tt = _selecionar_tipo_grafico("tipo_teste", ["Barras", "Pizza", "Rosca", "Treemap", "Barras Horizontais"])
+            tipo_tt = _selecionar_tipo_grafico("tipo_teste", ["Barras", "Pizza", "Rosca", "Treemap", "Barras Horizontais", "Pareto"])
         with col_grafico:
             _plotar(df_tipo_teste, tipo_tt, x="Tipo de Teste", y="Quantidade", chave="tipo_teste")
         st.divider()
@@ -311,6 +354,29 @@ def render_dashboard_page() -> None:
         st.markdown("**Tendência ao Longo do Tempo**")
         _plotar(df_tendencia, "Linha", x="Semana", y="Quantidade", chave="tendencia",
                 cor="Status" if "Status" in df_tendencia.columns else None)
+        st.divider()
+
+    # ------------------------------------------------- Bugs abertos vs. solucionados
+    df_bugs_tempo = analytics.bugs_abertos_vs_solucionados(df_filtrado, mapeamento)
+    if df_bugs_tempo is not None and not df_bugs_tempo.empty:
+        col_grafico, col_config = st.columns([3, 1])
+        with col_config:
+            st.markdown("**Bugs Abertos vs. Solucionados**")
+            st.caption(
+                "Acumulado por semana de criação. 'Solucionados' reflete a situação "
+                "atual (o arquivo não traz data de resolução), então mostra quantos "
+                "dos bugs abertos até cada semana já estão resolvidos hoje."
+            )
+            tipo_bugs_tempo = _selecionar_tipo_grafico("bugs_tempo", ["Área", "Linha", "Barras"])
+        with col_grafico:
+            df_bugs_tempo_longo = df_bugs_tempo.melt(
+                id_vars="Semana",
+                value_vars=["Ainda Abertos (situação atual)", "Já Solucionados (situação atual)"],
+                var_name="Categoria",
+                value_name="Quantidade",
+            )
+            _plotar(df_bugs_tempo_longo, tipo_bugs_tempo, x="Semana", y="Quantidade",
+                    chave="bugs_tempo", cor="Categoria")
         st.divider()
 
     # ------------------------------------------------- Ranking de responsáveis
