@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS {_TABELA} (
 STATUS_PENDENTE = "pendente"
 STATUS_CRIADA = "criada"
 STATUS_REJEITADA = "rejeitada"
+STATUS_REVOGADA = "revogada"  # já foi criada, mas o acesso foi revogado depois
 
 
 @dataclass
