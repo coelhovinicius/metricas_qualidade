@@ -2,29 +2,22 @@
 Cliente para buscar work items diretamente do Azure DevOps (REST API), como
 alternativa a exportar/importar o CSV manualmente.
 
-Reaproveita a MESMA query salva já usada hoje para a exportação manual - o
-resultado sai com exatamente as mesmas colunas do CSV exportado (ID, Work
-Item Type, Title, Assigned To, State, Tags, Created Date, Severity, Area
-Path), então o restante do pipeline (`core.column_mapper` / `core.analytics`)
-não precisa de nenhum ajuste: os dois caminhos (upload manual e busca
-automática) convergem pro mesmo dataframe/mapeamento.
+Arquitetura de credenciais (v2 - PAT por usuário, nunca em Secrets):
+    O Personal Access Token (PAT) NUNCA fica em `st.secrets`/`secrets.toml` -
+    cada usuário cola o seu próprio PAT em um campo de senha na tela de
+    importação (ver `ui/pages/upload_page.py`). O PAT fica só em
+    `st.session_state` (memória do processo daquela sessão do navegador,
+    nunca gravado em disco/banco), some ao fazer logout/fechar a aba, e cada
+    requisição à API do Azure DevOps é feita com o PAT de quem está logado -
+    o que dá rastreabilidade real: o log de acesso do Azure DevOps mostra o
+    usuário dono do PAT usado, não uma conta de serviço compartilhada.
 
-Configuração (nunca no código - sempre em `st.secrets`):
-
-    [azure_devops]
-    organization = "sua-organizacao"
-    project = "SeuProjeto"
-    query_id = "id-da-query-salva"
-    pat = "seu-personal-access-token"
-
-Localmente isso vai em `.streamlit/secrets.toml` (arquivo que NÃO deve ser
-versionado no Git - conferir se já está no .gitignore). Em produção, na
-seção "Secrets" da plataforma onde o app está publicado (o mesmo lugar onde
-já fica configurado o `[auth] cookie_key`, ver `auth/auth_manager.py`).
-
-Como descobrir organization / project / query_id: são as três partes que
-aparecem na URL da query salva no navegador, no formato
-    https://dev.azure.com/{organization}/{project}/_queries/query/{query_id}/
+Organização / Projeto / Area Path / Query também não são mais fixos em
+`secrets.toml`: são escolhidos dentro do app, em cascata (organização ->
+projeto -> area path opcional -> query existente), cada passo consultando a
+API do Azure DevOps com o PAT informado. A criação de queries novas continua
+acontecendo na própria interface do Azure DevOps (ver `montar_link_criacao_query`),
+não dentro deste app.
 """
 
 from __future__ import annotations
@@ -34,7 +27,6 @@ from typing import Optional
 
 import pandas as pd
 import requests
-import streamlit as st
 
 API_VERSION = "7.1"
 TAMANHO_LOTE = 200  # limite de IDs por chamada da API de workitemsbatch
@@ -53,6 +45,7 @@ CAMPOS_API_PARA_COLUNA = {
     "System.CreatedDate": "Created Date",
     "Microsoft.VSTS.Common.Severity": "Severity",
     "System.AreaPath": "Area Path",
+    "System.BoardColumn": "Board Column",
 }
 
 
@@ -61,59 +54,42 @@ class AzureDevOpsError(Exception):
 
 
 @dataclass
-class ConfiguracaoAzureDevOps:
-    organization: str
-    project: str
-    query_id: str
-    pat: str
+class Projeto:
+    id: str
+    nome: str
 
 
-def configuracao_disponivel() -> bool:
-    """True quando os 4 campos obrigatórios de [azure_devops] estão presentes em st.secrets."""
-    try:
-        config = st.secrets.get("azure_devops")
-    except Exception:
-        # st.secrets pode levantar exceção quando não existe secrets.toml
-        # configurado - mesmo comportamento já tratado em auth_manager.py.
-        return False
-    if not config:
-        return False
-    campos_obrigatorios = ("organization", "project", "query_id", "pat")
-    return all(config.get(campo) for campo in campos_obrigatorios)
+@dataclass
+class ItemQuery:
+    id: str
+    nome: str
+    caminho: str  # ex.: "Shared Queries/QA/Bugs em aberto"
 
 
-def _carregar_configuracao() -> ConfiguracaoAzureDevOps:
-    if not configuracao_disponivel():
-        raise AzureDevOpsError(
-            "As credenciais do Azure DevOps não estão configuradas. Adicione a seção "
-            "[azure_devops] (organization, project, query_id, pat) nos Secrets do "
-            "Streamlit antes de usar a busca automática."
-        )
-    config = st.secrets["azure_devops"]
-    return ConfiguracaoAzureDevOps(
-        organization=config["organization"],
-        project=config["project"],
-        query_id=config["query_id"],
-        pat=config["pat"],
-    )
-
-
-def _autenticacao(config: ConfiguracaoAzureDevOps) -> tuple[str, str]:
+def _autenticacao(pat: str) -> tuple[str, str]:
     # A API do Azure DevOps aceita o PAT como "senha" em Basic Auth, com usuário vazio.
-    return ("", config.pat)
+    return ("", pat)
 
 
 def _tratar_erro_http(resposta: requests.Response) -> None:
     if resposta.status_code == 401:
         raise AzureDevOpsError(
-            "O Azure DevOps recusou a autenticação (401) - o PAT configurado está "
-            "inválido, expirado ou sem permissão de leitura em Work Items. Gere um "
-            "novo Personal Access Token e atualize o secrets.toml."
+            "O Azure DevOps recusou a autenticação (401) - o seu PAT está inválido, "
+            "expirado ou sem permissão de leitura em Work Items. Gere um novo Personal "
+            "Access Token (escopo mínimo: Work Items · Read) e cole novamente no campo "
+            "de PAT."
+        )
+    if resposta.status_code == 403:
+        raise AzureDevOpsError(
+            "Seu PAT não tem permissão para acessar este recurso (403). Confira se o "
+            "token tem o escopo 'Work Items (Read)' e se sua conta tem acesso a este "
+            "projeto no Azure DevOps."
         )
     if resposta.status_code == 404:
         raise AzureDevOpsError(
-            "Organização, projeto ou query não encontrados (404). Confira os valores "
-            "de organization/project/query_id em [azure_devops] nos Secrets."
+            "Organização, projeto, area path ou query não encontrados (404). Confira os "
+            "valores escolhidos - ou, se acabou de criar a query no Azure DevOps, recarregue "
+            "a lista de queries."
         )
     if not resposta.ok:
         raise AzureDevOpsError(
@@ -122,18 +98,116 @@ def _tratar_erro_http(resposta: requests.Response) -> None:
         )
 
 
-def _buscar_ids_da_query(config: ConfiguracaoAzureDevOps) -> list[int]:
-    url = (
-        f"https://dev.azure.com/{config.organization}/{config.project}"
-        f"/_apis/wit/wiql/{config.query_id}?api-version={API_VERSION}"
-    )
+def _get(url: str, pat: str) -> dict:
     try:
-        resposta = requests.get(url, auth=_autenticacao(config), timeout=TIMEOUT_SEGUNDOS)
+        resposta = requests.get(url, auth=_autenticacao(pat), timeout=TIMEOUT_SEGUNDOS)
     except requests.RequestException as exc:
         raise AzureDevOpsError(f"Não foi possível conectar ao Azure DevOps: {exc}") from exc
-
     _tratar_erro_http(resposta)
-    corpo = resposta.json()
+    return resposta.json()
+
+
+def listar_projetos(organization: str, pat: str) -> list[Projeto]:
+    """Lista os Team Projects visíveis para o PAT informado, dentro da organização escolhida."""
+    if not organization or not pat:
+        raise AzureDevOpsError("Informe a organização e o PAT antes de carregar os projetos.")
+    url = f"https://dev.azure.com/{organization}/_apis/projects?api-version={API_VERSION}&$top=1000"
+    corpo = _get(url, pat)
+    projetos = [Projeto(id=item["id"], nome=item["name"]) for item in corpo.get("value", [])]
+    return sorted(projetos, key=lambda projeto: projeto.nome.lower())
+
+
+def listar_area_paths(organization: str, project: str, pat: str) -> list[str]:
+    """
+    Lista os Area Paths (achatados em string, ex.: 'Produto\\Time A\\Sub-time') do
+    projeto escolhido, na mesma notação usada no export manual em CSV.
+    """
+    url = (
+        f"https://dev.azure.com/{organization}/{project}/_apis/wit/classificationnodes/areas"
+        f"?api-version={API_VERSION}&$depth=20"
+    )
+    raiz = _get(url, pat)
+
+    caminhos: list[str] = []
+
+    def _percorrer(no: dict, caminho_atual: str) -> None:
+        nome = no.get("name", "")
+        caminho = f"{caminho_atual}\\{nome}" if caminho_atual else nome
+        caminhos.append(caminho)
+        for filho in no.get("children", []) or []:
+            _percorrer(filho, caminho)
+
+    _percorrer(raiz, "")
+    return caminhos
+
+
+def listar_queries(organization: str, project: str, pat: str) -> list[ItemQuery]:
+    """
+    Lista as queries salvas (pastas 'Shared Queries' e 'My Queries') do projeto,
+    achatando a árvore de pastas em uma lista única com o caminho completo.
+
+    A API só expande a árvore até o `$depth` pedido (aqui, 2 níveis) - uma pasta
+    que tenha filhos além disso volta com `hasChildren: true` mas `children`
+    vazio/ausente. Pra não perder queries guardadas em subpastas mais fundas
+    (ex.: "Shared Queries/QA/Sprint 23/Minha query"), qualquer pasta nessa
+    situação é expandida com uma chamada extra à API (`.../_apis/wit/queries/{id}`),
+    recursivamente.
+    """
+    raiz = _get(
+        f"https://dev.azure.com/{organization}/{project}/_apis/wit/queries"
+        f"?$depth=2&api-version={API_VERSION}",
+        pat,
+    )
+
+    itens: list[ItemQuery] = []
+
+    def _expandir_pasta_nao_carregada(no: dict) -> list[dict]:
+        corpo = _get(
+            f"https://dev.azure.com/{organization}/{project}/_apis/wit/queries/{no['id']}"
+            f"?$depth=2&api-version={API_VERSION}",
+            pat,
+        )
+        return corpo.get("children", []) or []
+
+    def _percorrer(no: dict, profundidade: int = 0) -> None:
+        if profundidade > 8:
+            # Trava de segurança contra uma estrutura de pastas anormalmente
+            # profunda (evita recursão/chamadas infinitas em caso de dado
+            # inesperado da API) - Azure DevOps não costuma passar disso.
+            return
+        if no.get("isFolder"):
+            filhos = no.get("children") or []
+            if not filhos and no.get("hasChildren") and no.get("id"):
+                filhos = _expandir_pasta_nao_carregada(no)
+            for filho in filhos:
+                _percorrer(filho, profundidade + 1)
+        else:
+            caminho = (no.get("path") or no.get("name", "")).lstrip("/")
+            itens.append(ItemQuery(id=no["id"], nome=no["name"], caminho=caminho))
+
+    for filho in raiz.get("value", []):
+        _percorrer(filho)
+
+    return itens
+
+
+def montar_link_criacao_query(organization: str, project: str) -> str:
+    """
+    Link direto para a tela nativa de criação de query do Azure DevOps, já
+    apontando para a organização/projeto escolhidos. O Azure DevOps não
+    documenta parâmetros de URL para pré-preencher Area Path/filtros, então
+    esse é o "melhor esforço": o usuário abre a tela certa e monta a query lá,
+    com os filtros da própria interface do Azure DevOps.
+    """
+    return f"https://dev.azure.com/{organization}/{project}/_queries/create/"
+
+
+def _buscar_ids_da_query(organization: str, project: str, query_id: str, pat: str) -> list[int]:
+    url = (
+        f"https://dev.azure.com/{organization}/{project}"
+        f"/_apis/wit/wiql/{query_id}?api-version={API_VERSION}"
+    )
+    corpo = _get(url, pat)
 
     # Query "flat" (lista simples) -> "workItems"; query com hierarquia
     # (ex.: árvore de Test Plan/Suite/Case) -> "workItemRelations".
@@ -147,8 +221,8 @@ def _buscar_ids_da_query(config: ConfiguracaoAzureDevOps) -> list[int]:
     return ids
 
 
-def _buscar_campos_em_lotes(config: ConfiguracaoAzureDevOps, ids: list[int]) -> list[dict]:
-    url = f"https://dev.azure.com/{config.organization}/_apis/wit/workitemsbatch?api-version={API_VERSION}"
+def _buscar_campos_em_lotes(organization: str, ids: list[int], pat: str) -> list[dict]:
+    url = f"https://dev.azure.com/{organization}/_apis/wit/workitemsbatch?api-version={API_VERSION}"
     campos = list(CAMPOS_API_PARA_COLUNA.keys())
     resultados: list[dict] = []
 
@@ -157,7 +231,7 @@ def _buscar_campos_em_lotes(config: ConfiguracaoAzureDevOps, ids: list[int]) -> 
         try:
             resposta = requests.post(
                 url,
-                auth=_autenticacao(config),
+                auth=_autenticacao(pat),
                 json={"ids": lote, "fields": campos},
                 timeout=TIMEOUT_SEGUNDOS,
             )
@@ -221,19 +295,25 @@ def _montar_dataframe(itens_api: list[dict]) -> pd.DataFrame:
     return df
 
 
-def buscar_work_items_da_query() -> pd.DataFrame:
+def buscar_work_items_da_query(
+    organization: str, project: str, query_id: str, pat: str
+) -> pd.DataFrame:
     """
-    Busca todos os work items da query salva configurada em `st.secrets`, e
-    devolve um DataFrame com as mesmas colunas do export manual em CSV.
+    Busca todos os work items da query escolhida, e devolve um DataFrame com
+    as mesmas colunas do export manual em CSV.
 
     Levanta `AzureDevOpsError` (mensagem amigável, pronta pra exibir na
-    interface) em caso de configuração ausente/inválida ou falha de
-    comunicação com a API.
+    interface) em caso de parâmetro ausente/inválido ou falha de comunicação
+    com a API.
     """
-    config = _carregar_configuracao()
-    ids = _buscar_ids_da_query(config)
+    if not all([organization, project, query_id, pat]):
+        raise AzureDevOpsError(
+            "Organização, projeto, query e PAT são obrigatórios para buscar os dados."
+        )
+
+    ids = _buscar_ids_da_query(organization, project, query_id, pat)
     if not ids:
         return pd.DataFrame(columns=list(CAMPOS_API_PARA_COLUNA.values()))
 
-    itens_api = _buscar_campos_em_lotes(config, ids)
+    itens_api = _buscar_campos_em_lotes(organization, ids, pat)
     return _montar_dataframe(itens_api)

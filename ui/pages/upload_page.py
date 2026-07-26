@@ -6,11 +6,23 @@ import time
 
 import streamlit as st
 
-from core.azure_devops_client import AzureDevOpsError, buscar_work_items_da_query, configuracao_disponivel
+from core.azure_devops_client import (
+    AzureDevOpsError,
+    buscar_work_items_da_query,
+    listar_area_paths,
+    listar_projetos,
+    listar_queries,
+    montar_link_criacao_query,
+)
 from core.column_mapper import MapeamentoColunas, detectar_mapeamento
 from core.data_loader import DataLoadError, ResultadoCarga, carregar_arquivo
 from ui.components import action_button, finish_action, loading_overlay, render_header
-from utils.session import resetar_dados_importados
+from utils.session import resetar_dados_importados, resetar_selecao_azure_devops
+
+# Organizações sugeridas no dropdown (apenas o rótulo aparece pronto - nada é
+# carregado da API até o usuário clicar em "Carregar organização"). Se sua
+# empresa usa mais de uma organização no Azure DevOps, adicione aqui.
+ORGANIZACOES_SUGERIDAS = ["refuturiza"]
 
 CAMPOS_MAPEAVEIS = [
     ("projeto", "Projeto"),
@@ -22,6 +34,7 @@ CAMPOS_MAPEAVEIS = [
     ("responsavel", "Responsável / Executor"),
     ("caso_teste", "Caso de Teste / ID"),
     ("severidade", "Severidade / Prioridade"),
+    ("coluna_board", "Coluna do Board (Kanban)"),
 ]
 
 CHAVE_CAMPOS_PERSONALIZADOS = "campos_personalizados_temp"
@@ -104,24 +117,192 @@ def _renderizar_importacao_manual() -> None:
 
 
 def _renderizar_importacao_azure_devops() -> None:
-    if not configuracao_disponivel():
-        st.warning(
-            "A busca automática ainda não está configurada. Adicione a seção "
-            "`[azure_devops]` (organization, project, query_id, pat) nos "
-            "**Secrets** do Streamlit para habilitar esta opção. Enquanto isso, "
-            "use a importação manual do arquivo."
+    st.caption(
+        "Busca work items direto da API do Azure DevOps, sem precisar baixar e subir o "
+        "CSV manualmente. Escolha a organização, o projeto e (se quiser) o Area Path, "
+        "depois selecione uma query já existente para trazer os dados."
+    )
+
+    st.text_input(
+        "Seu Personal Access Token (PAT) do Azure DevOps",
+        type="password",
+        key="azure_pat",
+        placeholder="Cole aqui o seu PAT pessoal",
+        help=(
+            "Cada usuário usa o próprio PAT — ele nunca é salvo em disco nem nos Secrets "
+            "do Streamlit, fica só na memória desta sessão do navegador e some ao sair. "
+            "Gere um token em dev.azure.com → foto de perfil → Personal Access Tokens → "
+            "New Token, com escopo 'Work Items (Read)'."
+        ),
+    )
+    pat = st.session_state.get("azure_pat", "")
+
+    # ---------------------------------------------------- Passo 1: Organização (obrigatório)
+    col_org, col_botao_org = st.columns([3, 1])
+    with col_org:
+        organizacao_escolhida = st.selectbox(
+            "Organização",
+            options=ORGANIZACOES_SUGERIDAS,
+            key="azure_organizacao_input",
+            help="Nada é carregado da API até você clicar em \"Carregar organização\".",
         )
+    with col_botao_org:
+        st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+        # `key=` no container vira a classe CSS `st-key-ado_btn_carregar_organizacao`
+        # (recurso nativo do Streamlit) - é o que ui/theme.py usa pra pintar só
+        # este botão de azul, sem afetar os outros botões da página.
+        with st.container(key="ado_btn_carregar_organizacao"):
+            carregar_org = st.button(
+                "Carregar organização",
+                key="btn_carregar_organizacao_azure",
+                use_container_width=True,
+                disabled=not pat,
+            )
+    if not pat:
+        st.caption("Informe o seu PAT acima para poder carregar a organização.")
+
+    if carregar_org:
+        with loading_overlay("Carregando projetos da organização, aguarde..."):
+            try:
+                resetar_selecao_azure_devops()
+                projetos = listar_projetos(organizacao_escolhida, pat)
+                st.session_state["azure_organizacao_carregada"] = organizacao_escolhida
+                st.session_state["azure_projetos_disponiveis"] = projetos
+                st.session_state["erro_carga"] = None
+            except AzureDevOpsError as erro:
+                st.session_state["azure_organizacao_carregada"] = None
+                st.session_state["erro_carga"] = str(erro)
+        st.rerun()
+
+    organizacao_carregada = st.session_state.get("azure_organizacao_carregada")
+    if not organizacao_carregada:
         return
 
-    st.caption(
-        "Busca os work items da mesma query salva usada hoje para o export manual, "
-        "direto da API do Azure DevOps — sem precisar baixar e subir o CSV."
+    # ---------------------------------------------------- Passo 2: Projeto (obrigatório)
+    projetos_disponiveis = st.session_state.get("azure_projetos_disponiveis", [])
+    opcoes_projeto = ["---"] + [projeto.nome for projeto in projetos_disponiveis]
+
+    projeto_atual = st.session_state.get("azure_projeto_selecionado")
+    indice_projeto = opcoes_projeto.index(projeto_atual) if projeto_atual in opcoes_projeto else 0
+
+    projeto_escolhido = st.selectbox(
+        "Projeto",
+        options=opcoes_projeto,
+        index=indice_projeto,
+        key="azure_projeto_input",
     )
+
+    if projeto_escolhido != "---" and projeto_escolhido != projeto_atual:
+        # Escolher um projeto novo já dispara sozinho o carregamento do
+        # próximo passo (Area Path + Queries) — não precisa de botão de
+        # confirmação separado.
+        with loading_overlay("Carregando informações do projeto, aguarde..."):
+            try:
+                area_paths = listar_area_paths(organizacao_carregada, projeto_escolhido, pat)
+                queries = listar_queries(organizacao_carregada, projeto_escolhido, pat)
+                st.session_state["azure_projeto_selecionado"] = projeto_escolhido
+                st.session_state["azure_area_paths_disponiveis"] = area_paths
+                st.session_state["azure_area_path_selecionado"] = None
+                st.session_state["azure_queries_disponiveis"] = queries
+                st.session_state["azure_query_selecionada_id"] = None
+                st.session_state["erro_carga"] = None
+            except AzureDevOpsError as erro:
+                st.session_state["erro_carga"] = str(erro)
+        st.rerun()
+    elif projeto_escolhido == "---" and projeto_atual is not None:
+        resetar_selecao_azure_devops(manter_organizacao=True)
+        st.rerun()
+
+    projeto_selecionado = st.session_state.get("azure_projeto_selecionado")
+    if not projeto_selecionado:
+        return
+
+    # ---------------------------------------------------- Passo 3: Area Path (opcional)
+    area_paths_disponiveis = st.session_state.get("azure_area_paths_disponiveis", [])
+    opcoes_area_path = ["---"] + area_paths_disponiveis
+    area_path_atual = st.session_state.get("azure_area_path_selecionado") or "---"
+    indice_area_path = opcoes_area_path.index(area_path_atual) if area_path_atual in opcoes_area_path else 0
+
+    area_path_escolhido = st.selectbox(
+        "Area Path do Board no Projeto (opcional)",
+        options=opcoes_area_path,
+        index=indice_area_path,
+        key="azure_area_path_input",
+    )
+    st.caption(
+        "Campo opcional. Se você escolher um Area Path aqui, o app filtra os work items "
+        "trazidos pela query para manter só os que estão dentro dele (e dos seus "
+        "sub-caminhos). Se deixar em **---**, nenhum filtro extra de Area Path é aplicado "
+        "— vale o que a própria query já retorna."
+    )
+    st.session_state["azure_area_path_selecionado"] = None if area_path_escolhido == "---" else area_path_escolhido
+
+    # ---------------------------------------------- Passo 4: Query existente (obrigatório p/ buscar)
+    queries_disponiveis = st.session_state.get("azure_queries_disponiveis", [])
+    mapa_queries = {item.caminho: item.id for item in queries_disponiveis}
+    opcoes_query = ["---"] + list(mapa_queries.keys())
+
+    col_query, col_atualizar, col_link = st.columns([3, 1, 1])
+    with col_query:
+        query_escolhida_caminho = st.selectbox(
+            "Query salva no Azure DevOps",
+            options=opcoes_query,
+            key="azure_query_input",
+        )
+    with col_atualizar:
+        st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+        atualizar_queries = st.button(
+            "🔄 Atualizar lista",
+            key="btn_atualizar_queries_azure",
+            use_container_width=True,
+            help="Busca a lista de queries de novo — use depois de criar uma query nova no Azure DevOps.",
+        )
+    with col_link:
+        st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+        link_criacao = montar_link_criacao_query(organizacao_carregada, projeto_selecionado)
+        st.link_button(
+            "Criar nova query ↗",
+            link_criacao,
+            use_container_width=True,
+            help=(
+                "Abre a tela nativa do Azure DevOps para você montar uma query nova "
+                f"em {organizacao_carregada}/{projeto_selecionado}. Depois de salvar lá, "
+                "clique em 'Atualizar lista' ao lado para recarregar."
+            ),
+        )
+
+    if atualizar_queries:
+        with loading_overlay("Atualizando lista de queries, aguarde..."):
+            try:
+                st.session_state["azure_queries_disponiveis"] = listar_queries(
+                    organizacao_carregada, projeto_selecionado, pat
+                )
+                st.session_state["erro_carga"] = None
+            except AzureDevOpsError as erro:
+                st.session_state["erro_carga"] = str(erro)
+        st.rerun()
+
+    st.session_state["azure_query_selecionada_id"] = (
+        mapa_queries[query_escolhida_caminho] if query_escolhida_caminho != "---" else None
+    )
+
+    if not queries_disponiveis:
+        st.info(
+            "Nenhuma query encontrada neste projeto ainda. Confira se o projeto certo está "
+            "selecionado acima e se a query está salva em **Shared Queries** (ou em **My "
+            "Queries** do mesmo usuário dono do PAT) — depois use **Atualizar lista**. Ou "
+            "use o botão **Criar nova query** para criar uma diretamente no Azure DevOps."
+        )
+
+    query_id = st.session_state.get("azure_query_selecionada_id")
+    if not query_id:
+        st.info("Selecione uma query salva acima para habilitar o download.")
+        return
 
     processar = action_button(
         "Baixar relatório atualizado",
         key="btn_baixar_azure_devops",
-        help="Busca os dados mais recentes da query configurada no Azure DevOps.",
+        help="Busca os dados mais recentes da query escolhida no Azure DevOps.",
     )
 
     if processar:
@@ -129,19 +310,27 @@ def _renderizar_importacao_azure_devops() -> None:
             try:
                 resetar_dados_importados()
                 st.session_state[CHAVE_CAMPOS_PERSONALIZADOS] = []
-                dataframe = buscar_work_items_da_query()
+                dataframe = buscar_work_items_da_query(
+                    organizacao_carregada, projeto_selecionado, query_id, pat
+                )
+
+                area_path_filtro = st.session_state.get("azure_area_path_selecionado")
+                if area_path_filtro and "Area Path" in dataframe.columns:
+                    dataframe = dataframe[
+                        dataframe["Area Path"].astype(str).str.startswith(area_path_filtro, na=False)
+                    ]
 
                 if dataframe.empty:
                     raise AzureDevOpsError(
-                        "A query configurada não retornou nenhum work item. Confira o "
-                        "query_id em [azure_devops] nos Secrets."
+                        "A query escolhida (após o filtro de Area Path, se algum foi "
+                        "escolhido) não retornou nenhum work item."
                     )
 
                 resultado = ResultadoCarga(
                     dataframe=dataframe,
                     encoding_detectado="—",
                     delimitador_detectado="—",
-                    nome_arquivo="Azure DevOps (consulta automática)",
+                    nome_arquivo=f"Azure DevOps · {projeto_selecionado} (consulta automática)",
                     total_linhas=dataframe.shape[0],
                     total_colunas=dataframe.shape[1],
                 )

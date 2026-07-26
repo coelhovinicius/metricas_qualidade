@@ -13,9 +13,9 @@ import streamlit as st
 from core import analytics
 from core.column_mapper import MapeamentoColunas
 from ui.components import action_button, finish_action, loading_overlay, render_header, render_kpi_row
-from ui.theme import PALETA_GRAFICOS, PALETA_STATUS
+from ui.theme import PALETA_BUGS_TEMPO, PALETA_GRAFICOS, PALETA_STATUS
 
-TIPOS_GRAFICO_PADRAO = ["Barras", "Barras Horizontais", "Pizza", "Rosca", "Linha", "Área", "Treemap", "Pareto"]
+TIPOS_GRAFICO_PADRAO = ["Barras", "Barras Horizontais", "Pizza", "Rosca", "Linha", "Área", "Treemap", "Pareto", "Radar (Preenchido)"]
 
 
 def _colunas_disponiveis_para_grafico(
@@ -34,6 +34,7 @@ def _colunas_disponiveis_para_grafico(
         "responsavel": "Responsável / Executor",
         "caso_teste": "Caso de Teste / ID",
         "severidade": "Severidade / Prioridade",
+        "coluna_board": "Coluna do Board (Kanban)",
     }
     for campo, rotulo in rotulos_fixos.items():
         coluna = getattr(mapeamento, campo)
@@ -166,7 +167,13 @@ def _construir_grafico_pareto(df: pd.DataFrame, x: str, y: str) -> go.Figure:
 
 
 def _plotar(df: pd.DataFrame, tipo: str, x: str, y: str, chave: str, cor: Optional[str] = None) -> None:
-    cor_discreta = PALETA_STATUS if cor == "__status_bruto__" and set(df[cor].unique()) <= set(PALETA_STATUS) else None
+    cor_discreta = None
+    if cor and cor in df.columns:
+        valores_cor = set(df[cor].unique())
+        if cor == "__status_bruto__" and valores_cor <= set(PALETA_STATUS):
+            cor_discreta = PALETA_STATUS
+        elif cor == "Categoria" and valores_cor <= set(PALETA_BUGS_TEMPO):
+            cor_discreta = PALETA_BUGS_TEMPO
 
     if tipo == "Barras":
         fig = px.bar(df, x=x, y=y, color=cor, color_discrete_sequence=PALETA_GRAFICOS,
@@ -191,9 +198,48 @@ def _plotar(df: pd.DataFrame, tipo: str, x: str, y: str, chave: str, cor: Option
         fig = px.area(df, x=x, y=y, color=cor, color_discrete_sequence=PALETA_GRAFICOS,
                        color_discrete_map=cor_discreta)
     elif tipo == "Treemap":
-        fig = px.treemap(df, path=[x], values=y, color=x, color_discrete_sequence=PALETA_GRAFICOS)
+        # Com uma segunda dimensão (cor/grupo) escolhida, o Treemap vira
+        # hierárquico de verdade (Categoria > Grupo) em vez de um nível só -
+        # é o caso em que "gráfico além de dois eixos" faz sentido de forma
+        # nativa, sem inventar um tipo de gráfico novo.
+        caminho = [x, cor] if cor else [x]
+        fig = px.treemap(df, path=caminho, values=y, color=cor or x, color_discrete_sequence=PALETA_GRAFICOS)
     elif tipo == "Pareto":
         fig = _construir_grafico_pareto(df, x, y)
+    elif tipo == "Radar (Preenchido)":
+        # Gráfico de radar/teia PREENCHIDO (filled radar chart): cada série vira
+        # um polígono fechado com a área sombreada, no estilo clássico de
+        # comparação "uma forma colorida por série" (ex.: Severidade em cada
+        # eixo, uma forma por Projeto/Responsável). Pra sobrepor mais de uma
+        # série - o que dá o efeito de formas coloridas se cruzando - use
+        # "Agrupar por" no construtor personalizado. Não faz sentido pra séries
+        # temporais (Semana) nem pra 2 categorias só (vira só uma linha reta) -
+        # por isso não é oferecido nesses gráficos.
+        fig = px.line_polar(df, r=y, theta=x, color=cor, line_close=True,
+                             color_discrete_sequence=PALETA_GRAFICOS, color_discrete_map=cor_discreta)
+        fig.update_traces(
+            fill="toself",
+            opacity=0.85,
+            mode="lines+markers",
+            marker=dict(size=6, line=dict(color="#FFFFFF", width=1)),
+            line=dict(width=2.5),
+        )
+        fig.update_layout(
+            polar=dict(
+                bgcolor="rgba(0,0,0,0)",
+                radialaxis=dict(
+                    visible=True,
+                    gridcolor="#E4E0D6",
+                    linecolor="#C9C4B8",
+                    tickfont=dict(size=11, color="#6B6558"),
+                ),
+                angularaxis=dict(
+                    gridcolor="#E4E0D6",
+                    linecolor="#C9C4B8",
+                    tickfont=dict(size=12),
+                ),
+            )
+        )
     else:  # Linha
         fig = px.line(df, x=x, y=y, color=cor, color_discrete_sequence=PALETA_GRAFICOS,
                        color_discrete_map=cor_discreta, markers=True)
@@ -203,9 +249,17 @@ def _plotar(df: pd.DataFrame, tipo: str, x: str, y: str, chave: str, cor: Option
         legend_title_text="",
         plot_bgcolor="rgba(0,0,0,0)",
         paper_bgcolor="rgba(0,0,0,0)",
+        polar_bgcolor="rgba(0,0,0,0)",
         font_family="Poppins, sans-serif",
     )
     st.plotly_chart(fig, use_container_width=True, key=f"chart_{chave}")
+
+    if tipo == "Radar (Preenchido)" and cor is None:
+        st.caption(
+            "💡 Pra sobrepor várias formas coloridas no mesmo radar (comparar Projetos, "
+            "Responsáveis, etc. lado a lado), use o **construtor de gráfico personalizado** "
+            "mais abaixo e escolha uma coluna em \"Agrupar por\"."
+        )
 
 
 def render_dashboard_page() -> None:
@@ -259,17 +313,16 @@ def render_dashboard_page() -> None:
 
     # ---------------------------------------------------- Status geral
     if mapeamento.status:
-        col_grafico, col_config = st.columns([3, 1])
-        with col_config:
-            st.markdown("**Distribuição de Status**" if not status_binario else "**Passou vs. Não Passou**")
-            tipo_status = _selecionar_tipo_grafico("status_geral", ["Pizza", "Rosca", "Barras", "Barras Horizontais", "Treemap"])
-        with col_grafico:
-            if status_binario:
-                resumo_status = df_filtrado["__status_normalizado__"].value_counts().reset_index()
-                resumo_status.columns = ["Status", "Quantidade"]
-            else:
-                resumo_status = analytics.distribuicao_status_bruto(df_filtrado, mapeamento)
-            _plotar(resumo_status, tipo_status, x="Status", y="Quantidade", chave="status_geral")
+        st.markdown("**Distribuição de Status**" if not status_binario else "**Passou vs. Não Passou**")
+        col_tipo, _col_espaco = st.columns([1, 3])
+        with col_tipo:
+            tipo_status = _selecionar_tipo_grafico("status_geral", ["Pizza", "Rosca", "Barras", "Barras Horizontais", "Treemap", "Radar (Preenchido)"])
+        if status_binario:
+            resumo_status = df_filtrado["__status_normalizado__"].value_counts().reset_index()
+            resumo_status.columns = ["Status", "Quantidade"]
+        else:
+            resumo_status = analytics.distribuicao_status_bruto(df_filtrado, mapeamento)
+        _plotar(resumo_status, tipo_status, x="Status", y="Quantidade", chave="status_geral")
         st.divider()
 
     # ------------------------------------------------- Backlog aberto (idade)
@@ -300,45 +353,76 @@ def render_dashboard_page() -> None:
     # ------------------------------------------ Planejamento vs Efetivado
     df_planejamento = analytics.planejamento_vs_efetivado(df_filtrado, mapeamento)
     if df_planejamento is not None:
-        col_grafico, col_config = st.columns([3, 1])
-        with col_config:
-            st.markdown("**Planejamento vs. Testes Efetivados**")
+        st.markdown("**Planejamento vs. Testes Efetivados**")
+        col_tipo, _col_espaco = st.columns([1, 3])
+        with col_tipo:
             tipo_planejamento = _selecionar_tipo_grafico("planejamento", ["Barras", "Pizza", "Rosca"])
-        with col_grafico:
-            _plotar(df_planejamento, tipo_planejamento, x="Categoria", y="Quantidade", chave="planejamento")
+        _plotar(df_planejamento, tipo_planejamento, x="Categoria", y="Quantidade", chave="planejamento")
         st.divider()
 
     # ------------------------------------------------------ Testes por projeto
     df_projeto = analytics.testes_por_projeto(df_filtrado, mapeamento)
     if df_projeto is not None:
-        col_grafico, col_config = st.columns([3, 1])
-        with col_config:
-            st.markdown("**Testes por Projeto**")
+        st.markdown("**Testes por Projeto**")
+        col_tipo, _col_espaco = st.columns([1, 3])
+        with col_tipo:
             tipo_projeto = _selecionar_tipo_grafico("testes_projeto")
-        with col_grafico:
-            _plotar(df_projeto, tipo_projeto, x="Projeto", y="Quantidade de Testes", chave="testes_projeto")
+        _plotar(df_projeto, tipo_projeto, x="Projeto", y="Quantidade de Testes", chave="testes_projeto")
         st.divider()
 
     # ------------------------------------------------- Ranking de bugs
     df_bugs = analytics.ranking_bugs_por_projeto(df_filtrado, mapeamento)
     if df_bugs is not None and not df_bugs.empty:
-        col_grafico, col_config = st.columns([3, 1])
-        with col_config:
-            st.markdown("**Ranking de Bugs por Projeto**")
+        st.markdown("**Ranking de Bugs por Projeto**")
+        col_tipo, _col_espaco = st.columns([1, 3])
+        with col_tipo:
             tipo_bugs = _selecionar_tipo_grafico("bugs_projeto")
-        with col_grafico:
-            _plotar(df_bugs, tipo_bugs, x="Projeto", y="Quantidade de Bugs", chave="bugs_projeto")
+        _plotar(df_bugs, tipo_bugs, x="Projeto", y="Quantidade de Bugs", chave="bugs_projeto")
         st.divider()
 
     # ------------------------------------------------- Distribuição por Tipo de Teste
-    df_tipo_teste = analytics.distribuicao_tipo_teste(df_filtrado, mapeamento)
-    if df_tipo_teste is not None and not df_tipo_teste.empty:
-        col_grafico, col_config = st.columns([3, 1])
-        with col_config:
-            st.markdown("**Distribuição por Tipo de Teste**")
-            tipo_tt = _selecionar_tipo_grafico("tipo_teste", ["Barras", "Pizza", "Rosca", "Treemap", "Barras Horizontais", "Pareto"])
-        with col_grafico:
+    if mapeamento.tipo_teste and mapeamento.tipo_teste in df_filtrado.columns:
+        tipos_teste_disponiveis = sorted(
+            df_filtrado[mapeamento.tipo_teste].dropna().astype(str).unique().tolist()
+        )
+        # Pré-seleção sugerida: tipos que são contêineres organizacionais do
+        # Azure DevOps (agrupam vários Test Cases dentro), não um item de
+        # teste individual - contar "1 Test Plan" ao lado de "1 Test Case" na
+        # mesma distribuição não é uma comparação de volume válida. O usuário
+        # pode ajustar livremente no multiselect abaixo.
+        _PALAVRAS_TIPO_CONTAINER = ("test plan", "test suite")
+        padrao_tipos_excluidos = [
+            valor
+            for valor in tipos_teste_disponiveis
+            if any(palavra in valor.lower() for palavra in _PALAVRAS_TIPO_CONTAINER)
+        ]
+
+        st.markdown("**Distribuição por Tipo de Teste**")
+        st.caption(
+            "Por padrão, exclui tipos que são contêineres organizacionais (ex.: Test Plan, "
+            "Test Suite) — eles agrupam vários Test Cases e não representam um item de teste "
+            "individual, então não fazem sentido na mesma régua de contagem."
+        )
+        tipos_excluidos_selecionados = st.multiselect(
+            "Tipos a excluir desta distribuição",
+            options=tipos_teste_disponiveis,
+            default=padrao_tipos_excluidos,
+            key="tipo_teste_excluidos",
+            help=(
+                "Itens desses tipos não entram na contagem deste gráfico específico — "
+                "continuam contando normalmente nos outros indicadores do painel."
+            ),
+        )
+        df_tipo_teste = analytics.distribuicao_tipo_teste(
+            df_filtrado, mapeamento, tipos_excluidos=set(tipos_excluidos_selecionados)
+        )
+        if df_tipo_teste is not None and not df_tipo_teste.empty:
+            col_tipo, _col_espaco = st.columns([1, 3])
+            with col_tipo:
+                tipo_tt = _selecionar_tipo_grafico("tipo_teste", ["Barras", "Pizza", "Rosca", "Treemap", "Barras Horizontais", "Pareto", "Radar (Preenchido)"])
             _plotar(df_tipo_teste, tipo_tt, x="Tipo de Teste", y="Quantidade", chave="tipo_teste")
+        else:
+            st.info("Nenhum tipo restante depois da exclusão acima — ajuste a lista para ver o gráfico.")
         st.divider()
 
     # ------------------------------------------------- Taxa de sucesso por projeto
@@ -357,26 +441,61 @@ def render_dashboard_page() -> None:
         st.divider()
 
     # ------------------------------------------------- Bugs abertos vs. solucionados
-    df_bugs_tempo = analytics.bugs_abertos_vs_solucionados(df_filtrado, mapeamento)
+    colunas_board_disponiveis: list[str] = []
+    padrao_colunas_externas: list[str] = []
+    if mapeamento.coluna_board and mapeamento.coluna_board in df_filtrado.columns:
+        colunas_board_disponiveis = sorted(
+            df_filtrado[mapeamento.coluna_board].dropna().astype(str).unique().tolist()
+        )
+        # Pré-seleção sugerida: colunas do board com nome que sugerem espera por
+        # validação de fora da QA (Produto/Negócio/UX/UAT/Homologação). O
+        # usuário pode ajustar livremente no multiselect abaixo - é só um
+        # ponto de partida pra não começar do zero.
+        _PALAVRAS_SUGESTAO_EXTERNA = ("uat", "homolog", "aceit", "produto", "negocio", "negócio", "ux")
+        padrao_colunas_externas = [
+            valor
+            for valor in colunas_board_disponiveis
+            if any(palavra in valor.lower() for palavra in _PALAVRAS_SUGESTAO_EXTERNA)
+        ]
+
+    colunas_externas_selecionadas = st.session_state.get(
+        "bugs_tempo_colunas_externas", padrao_colunas_externas
+    )
+    df_bugs_tempo = analytics.bugs_abertos_vs_solucionados(
+        df_filtrado, mapeamento, colunas_aguardando_externo=set(colunas_externas_selecionadas)
+    )
     if df_bugs_tempo is not None and not df_bugs_tempo.empty:
-        col_grafico, col_config = st.columns([3, 1])
-        with col_config:
-            st.markdown("**Bugs Abertos vs. Solucionados**")
-            st.caption(
-                "Acumulado por semana de criação. 'Solucionados' reflete a situação "
-                "atual (o arquivo não traz data de resolução), então mostra quantos "
-                "dos bugs abertos até cada semana já estão resolvidos hoje."
+        st.markdown("**Bugs Abertos vs. Solucionados**")
+        st.caption(
+            "Acumulado por semana de criação. 'Finalizado' reflete a situação atual "
+            "(o arquivo não traz data de resolução), então mostra quantos dos bugs "
+            "criados até cada semana já estão numa situação terminal hoje."
+        )
+        if colunas_board_disponiveis:
+            st.multiselect(
+                "Colunas do board fora do controle da QA (aguardando validação externa)",
+                options=colunas_board_disponiveis,
+                default=padrao_colunas_externas,
+                key="bugs_tempo_colunas_externas",
+                help=(
+                    "Itens que a QA já resolveu, mas que estão parados numa dessas colunas "
+                    "do board (ex.: 'Pronto para UAT', aguardando o time de Produto/Negócio/UX "
+                    "validar) entram na categoria 'Aguardando Validação Externa' em vez de "
+                    "contar como trabalho ainda em andamento da QA."
+                ),
             )
+        col_tipo, _col_espaco = st.columns([1, 3])
+        with col_tipo:
             tipo_bugs_tempo = _selecionar_tipo_grafico("bugs_tempo", ["Área", "Linha", "Barras"])
-        with col_grafico:
-            df_bugs_tempo_longo = df_bugs_tempo.melt(
-                id_vars="Semana",
-                value_vars=["Ainda Abertos (situação atual)", "Já Solucionados (situação atual)"],
-                var_name="Categoria",
-                value_name="Quantidade",
-            )
-            _plotar(df_bugs_tempo_longo, tipo_bugs_tempo, x="Semana", y="Quantidade",
-                    chave="bugs_tempo", cor="Categoria")
+        colunas_valor = [coluna for coluna in df_bugs_tempo.columns if coluna not in ("Semana", "Bugs Criados (acumulado)")]
+        df_bugs_tempo_longo = df_bugs_tempo.melt(
+            id_vars="Semana",
+            value_vars=colunas_valor,
+            var_name="Categoria",
+            value_name="Quantidade",
+        )
+        _plotar(df_bugs_tempo_longo, tipo_bugs_tempo, x="Semana", y="Quantidade",
+                chave="bugs_tempo", cor="Categoria")
         st.divider()
 
     # ------------------------------------------------- Ranking de responsáveis
@@ -392,6 +511,75 @@ def render_dashboard_page() -> None:
         st.markdown("**Distribuição por Severidade/Prioridade**")
         _plotar(df_severidade, "Pizza", x="Severidade", y="Quantidade", chave="severidade")
         st.divider()
+
+    # ------------------------------------------------- Scorecard de Qualidade (Radar Preenchido)
+    st.markdown("**Scorecard de Qualidade (Radar Preenchido)**")
+    st.caption(
+        "Compara várias dimensões de qualidade ao mesmo tempo — cada entidade escolhida (ex.: "
+        "um Projeto) vira uma borda/eixo do radar, e cada critério vira uma forma colorida "
+        "sobreposta, com uma nota de 0 a 10 em cada borda. É o gráfico de radar preenchido "
+        "\"de verdade\" (várias métricas diferentes por forma), diferente do construtor "
+        "personalizado abaixo (uma métrica só, espalhada por categorias)."
+    )
+    colunas_disponiveis_scorecard = _colunas_disponiveis_para_grafico(df_filtrado, mapeamento)
+    if not colunas_disponiveis_scorecard:
+        st.info("Nenhuma coluna disponível para montar o scorecard.")
+    else:
+        col_entidade, col_criterios = st.columns([1, 2])
+        rotulos_entidade = list(colunas_disponiveis_scorecard.keys())
+        with col_entidade:
+            indice_padrao = rotulos_entidade.index("Projeto") if "Projeto" in rotulos_entidade else 0
+            rotulo_entidade = st.selectbox(
+                "Comparar por", rotulos_entidade, index=indice_padrao, key="scorecard_entidade",
+                help="Cada valor distinto dessa coluna vira uma borda/eixo (ponta) do radar.",
+            )
+        coluna_entidade_scorecard = colunas_disponiveis_scorecard[rotulo_entidade]
+        with col_criterios:
+            rotulos_criterios_selecionados = st.multiselect(
+                "Critérios (eixos)",
+                options=list(analytics.CRITERIOS_SCORECARD.values()),
+                default=list(analytics.CRITERIOS_SCORECARD.values()),
+                key="scorecard_criterios",
+            )
+        criterios_selecionados = [
+            chave
+            for chave, rotulo in analytics.CRITERIOS_SCORECARD.items()
+            if rotulo in rotulos_criterios_selecionados
+        ]
+
+        if len(criterios_selecionados) < 3:
+            st.info("Escolha pelo menos 3 critérios para formar um radar com uma forma reconhecível.")
+        else:
+            dados_scorecard, criterios_indisponiveis, entidades_truncadas = analytics.calcular_scorecard_qualidade(
+                df_filtrado,
+                mapeamento,
+                coluna_entidade_scorecard,
+                criterios_selecionados,
+                colunas_aguardando_externo=set(colunas_externas_selecionadas),
+            )
+            if criterios_indisponiveis:
+                st.caption(
+                    "⚠️ Não calculados por falta de mapeamento nos dados atuais: "
+                    + ", ".join(criterios_indisponiveis)
+                )
+            if dados_scorecard is not None and not dados_scorecard.empty:
+                _plotar(
+                    dados_scorecard, "Radar (Preenchido)", x="Entidade", y="Nota",
+                    chave="scorecard_qualidade", cor="Critério",
+                )
+                avisos = [
+                    "Notas de 0 a 10. Entidades sem dado suficiente num critério aparecem com "
+                    "nota 0 na borda correspondente, em vez de um buraco no formato."
+                ]
+                if entidades_truncadas:
+                    avisos.append(
+                        f"Mostrando só as 8 entidades com mais registros em \"{rotulo_entidade}\" "
+                        "(mais que isso deixaria o radar ilegível)."
+                    )
+                st.caption(" ".join(avisos))
+            else:
+                st.info("Não foi possível calcular o scorecard com os critérios escolhidos.")
+    st.divider()
 
     # ------------------------------------------------- Construtor de gráfico personalizado
     _renderizar_construtor_grafico_personalizado(df_filtrado, mapeamento)
@@ -412,7 +600,9 @@ def _renderizar_construtor_grafico_personalizado(df: pd.DataFrame, mapeamento: M
     st.markdown("### Monte seu gráfico personalizado")
     st.caption(
         "Escolha quais colunas devem compor o gráfico — inclui campos já mapeados, campos "
-        "personalizados e qualquer outra coluna do arquivo importado."
+        "personalizados e qualquer outra coluna do arquivo importado. Cada coluna só pode "
+        "ser usada em uma dimensão por vez (não é possível repetir a mesma coluna no eixo X, "
+        "no agrupamento e na métrica)."
     )
 
     colunas_disponiveis = _colunas_disponiveis_para_grafico(df, mapeamento)
@@ -423,30 +613,55 @@ def _renderizar_construtor_grafico_personalizado(df: pd.DataFrame, mapeamento: M
         rotulo for rotulo, coluna in colunas_disponiveis.items() if coluna in colunas_numericas_reais
     ]
 
-    col1, col2, col3, col4 = st.columns(4)
+    OPCAO_SEM_GRUPO = "— nenhum —"
+
+    col1, col2, col3, col4, col5 = st.columns(5)
     with col1:
         rotulo_x = st.selectbox("Eixo / Categoria (X)", rotulos, key="grafico_custom_x")
+    coluna_x = colunas_disponiveis[rotulo_x]
+
     with col2:
+        # O agrupamento (2ª dimensão / cor) nunca pode repetir a coluna do X -
+        # por isso ela já sai fora das opções aqui, em vez de deixar o usuário
+        # escolher e só avisar depois.
+        rotulos_grupo_disponiveis = [r for r in rotulos if colunas_disponiveis[r] != coluna_x]
+        rotulo_grupo = st.selectbox(
+            "Agrupar por (opcional)",
+            [OPCAO_SEM_GRUPO] + rotulos_grupo_disponiveis,
+            key="grafico_custom_grupo",
+            help="Adiciona uma segunda dimensão ao gráfico (cor/série/empilhamento). "
+                 "Útil para comparações como 'Projeto por Status'.",
+        )
+    coluna_grupo = colunas_disponiveis.get(rotulo_grupo) if rotulo_grupo != OPCAO_SEM_GRUPO else None
+
+    with col3:
         modo_metrica = st.selectbox(
             "Métrica", ["Contagem de registros", "Soma de coluna numérica"], key="grafico_custom_modo"
         )
-    with col3:
+    with col4:
+        # A coluna numérica também não pode repetir nem o X nem o agrupamento -
+        # mesma lógica: filtra as opções em vez de só validar depois.
+        colunas_ja_usadas = {coluna_x, coluna_grupo} - {None}
+        rotulos_numericos_disponiveis = [
+            r for r in rotulos_numericos if colunas_disponiveis[r] not in colunas_ja_usadas
+        ]
         rotulo_metrica = None
         if modo_metrica == "Soma de coluna numérica":
-            if rotulos_numericos:
-                rotulo_metrica = st.selectbox("Coluna numérica", rotulos_numericos, key="grafico_custom_metrica")
+            if rotulos_numericos_disponiveis:
+                rotulo_metrica = st.selectbox("Coluna numérica", rotulos_numericos_disponiveis, key="grafico_custom_metrica")
             else:
                 st.selectbox("Coluna numérica", ["— nenhuma coluna numérica disponível —"], disabled=True)
         else:
             st.selectbox("Coluna numérica", ["— não se aplica —"], disabled=True)
-    with col4:
+    with col5:
         tipo_grafico_custom = st.selectbox("Tipo de gráfico", TIPOS_GRAFICO_PADRAO, key="grafico_custom_tipo")
+        if coluna_grupo and tipo_grafico_custom == "Pareto":
+            st.caption("⚠️ Pareto ignora o agrupamento (usa só Categoria x Métrica).")
 
     gerar = action_button("Gerar gráfico", key="btn_gerar_grafico_customizado")
 
     if gerar:
         with loading_overlay("Carregando, aguarde..."):
-            coluna_x = colunas_disponiveis[rotulo_x]
             coluna_metrica = colunas_disponiveis.get(rotulo_metrica) if rotulo_metrica else None
             modo = "soma" if modo_metrica == "Soma de coluna numérica" and coluna_metrica else "contagem"
 
@@ -457,6 +672,7 @@ def _renderizar_construtor_grafico_personalizado(df: pd.DataFrame, mapeamento: M
             # em vez de continuar exibindo dados antigos.
             st.session_state["grafico_customizado_params"] = {
                 "coluna_x": coluna_x,
+                "coluna_grupo": coluna_grupo,
                 "coluna_metrica": coluna_metrica,
                 "modo": modo,
                 "tipo_grafico": tipo_grafico_custom,
@@ -478,6 +694,7 @@ def _renderizar_construtor_grafico_personalizado(df: pd.DataFrame, mapeamento: M
                 parametros_salvos["coluna_x"],
                 parametros_salvos["coluna_metrica"],
                 parametros_salvos["modo"],
+                coluna_grupo=parametros_salvos.get("coluna_grupo"),
             )
             if dados_grafico.empty:
                 st.info("Nenhum dado disponível para os filtros/período selecionados atualmente.")
@@ -488,4 +705,5 @@ def _renderizar_construtor_grafico_personalizado(df: pd.DataFrame, mapeamento: M
                     x="Categoria",
                     y="Valor",
                     chave="grafico_customizado",
+                    cor="Grupo" if parametros_salvos.get("coluna_grupo") else None,
                 )

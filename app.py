@@ -26,6 +26,7 @@ from pathlib import Path
 import streamlit as st
 
 from auth.auth_manager import AuthManager
+from ui.pages.admin_page import render_admin_page, usuario_e_admin
 from ui.pages.dashboard_page import render_dashboard_page
 from ui.pages.login_page import render_login_page
 from ui.pages.upload_page import render_upload_page
@@ -64,11 +65,21 @@ def _renderizar_sidebar_navegacao(auth_manager: AuthManager) -> None:
     st.sidebar.divider()
 
     paginas = {"upload": "📥 Importar Dados", "dashboard": "📊 Indicadores"}
+    if usuario_e_admin(auth_manager.current_username()):
+        paginas["admin"] = "🔐 Solicitações de Acesso"
+
+    pagina_atual = st.session_state.get("pagina_atual", "upload")
+    if pagina_atual not in paginas:
+        # Ex.: usuário estava em "admin" e o app recarregou como outro
+        # usuário sem esse acesso - volta pra página padrão em vez de quebrar
+        # o índice do rádio abaixo.
+        pagina_atual = "upload"
+
     pagina_selecionada = st.sidebar.radio(
         "Navegação",
         options=list(paginas.keys()),
         format_func=lambda chave: paginas[chave],
-        index=list(paginas.keys()).index(st.session_state.get("pagina_atual", "upload")),
+        index=list(paginas.keys()).index(pagina_atual),
         label_visibility="collapsed",
     )
     st.session_state["pagina_atual"] = pagina_selecionada
@@ -87,8 +98,11 @@ def main() -> None:
 
     _renderizar_sidebar_navegacao(auth_manager)
 
-    if st.session_state["pagina_atual"] == "upload":
+    pagina_atual = st.session_state["pagina_atual"]
+    if pagina_atual == "upload":
         render_upload_page()
+    elif pagina_atual == "admin" and usuario_e_admin(auth_manager.current_username()):
+        render_admin_page()
     else:
         render_dashboard_page()
 

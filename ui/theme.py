@@ -43,6 +43,17 @@ PALETA_STATUS = {
     "Não informado": "#C9C2B8",
 }
 
+# Cores do gráfico "Bugs Abertos vs. Solucionados" - mesma paleta semântica de
+# PALETA_STATUS (verde = resolvido, laranja = ainda é trabalho ativo da QA),
+# com o âmbar de "Planejado" reaproveitado para "aguardando validação
+# externa" (não é nem "resolvido" nem "trabalho pendente da QA" - é uma
+# espera fora do controle do time).
+PALETA_BUGS_TEMPO = {
+    "Em Andamento (QA)": "#F15A24",
+    "Aguardando Validação Externa": "#E0A93E",
+    "Finalizado": "#2E7D5B",
+}
+
 
 def injetar_css_global() -> None:
     st.markdown(
@@ -144,23 +155,34 @@ def injetar_css_global() -> None:
             to {{ transform: rotate(360deg); }}
         }}
 
-        /* ---------- Título de destaque da tela de login (fundo laranja) ---------- */
-        /* Estiliza diretamente o subtítulo renderizado pela lib de autenticação
-           dentro do formulário (evita duplicar título e sobrar espaço vazio). */
+        /* ---------- Card do formulário de login (antes era só um bloco solto) ---------- */
+        div[data-testid="stForm"] {{
+            background-color: {SECONDARY_BACKGROUND_COLOR};
+            border: 1px solid #ecebe6;
+            border-radius: 16px;
+            padding: 30px 32px 22px 32px;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.05);
+        }}
+
+        /* ---------- Título "Acesso ao Painel de Qualidade" ---------- */
+        /* Antes tinha fundo laranja com fonte branca - agora é texto escuro sem
+           fundo, só com uma linha fina abaixo pra separar do formulário. */
         div[data-testid="stForm"] h3 {{
-            background-color: {PRIMARY_COLOR};
-            color: #FFFFFF !important;
+            background-color: transparent;
+            color: {TEXT_COLOR} !important;
             font-weight: 700;
-            font-size: 1.15rem;
-            padding: 12px 20px;
-            border-radius: 10px;
+            font-size: 1.3rem;
+            padding: 2px 0 16px 0;
+            border-radius: 0;
+            border-bottom: 2px solid #ecebe6;
             text-align: center;
-            margin-bottom: 18px;
+            margin-bottom: 20px;
         }}
 
         /* ---------- Botão "Entrar" do formulário de login: laranja, largura total ---------- */
         div[data-testid="stFormSubmitButton"] {{
             width: 100%;
+            margin-top: 6px;
         }}
         div[data-testid="stFormSubmitButton"] button {{
             width: 100%;
@@ -168,11 +190,39 @@ def injetar_css_global() -> None:
             color: #FFFFFF !important;
             border: none !important;
             font-weight: 600 !important;
+            font-size: 1rem !important;
+            padding: 14px 20px !important;
             border-radius: 10px !important;
         }}
         div[data-testid="stFormSubmitButton"] button:hover {{
             background-color: #D14E1D !important;
             color: #FFFFFF !important;
+        }}
+
+        /* ---------- Contorno mais visível em campos de texto/senha/área de texto ---------- */
+        /* O contorno padrão do Streamlit é cinza bem claro - some visualmente em
+           cima do fundo branco do card de login (e de qualquer container branco
+           da aplicação, como o formulário de solicitação de conta). Aplica pra
+           toda a aplicação (Usuário/Senha do login, PAT do Azure DevOps, campos
+           do formulário de solicitação de conta, etc.), não só a tela de login.
+           Estiliza o `<input>`/`<textarea>` nativo diretamente em vez de tentar
+           acertar o nome exato do wrapper interno do BaseWeb (que muda de
+           versão pra versão do Streamlit e por isso não pegou na primeira
+           tentativa) - `data-testid="stTextInput"/"stTextArea"` são estáveis
+           (API do próprio Streamlit), o elemento `<input>`/`<textarea>` dentro
+           deles sempre existe. */
+        div[data-testid="stTextInput"] input,
+        div[data-testid="stTextArea"] textarea {{
+            border: 1.5px solid #a8a196 !important;
+            border-radius: 8px !important;
+            background-color: #FFFFFF !important;
+            padding: 10px 12px !important;
+        }}
+        div[data-testid="stTextInput"] input:focus,
+        div[data-testid="stTextArea"] textarea:focus {{
+            border-color: {PRIMARY_COLOR} !important;
+            box-shadow: 0 0 0 1px {PRIMARY_COLOR}55 !important;
+            outline: none !important;
         }}
 
         /* ---------- Botões primários ---------- */
@@ -185,12 +235,91 @@ def injetar_css_global() -> None:
             cursor: not-allowed;
         }}
 
+        /* ---------- Botão azul padrão Microsoft Azure DevOps ---------- */
+        /* `st.container(key="ado_btn_carregar_organizacao")` em upload_page.py
+           gera a classe CSS `st-key-ado_btn_carregar_organizacao` no container
+           (recurso nativo do Streamlit desde a versão que introduziu `key=` em
+           st.container - bem mais confiável que tentar casar elementos via
+           seletor de irmão adjacente, que depende da estrutura interna exata
+           do HTML gerado e mudou entre versões do Streamlit). */
+        .st-key-ado_btn_carregar_organizacao button {{
+            background-color: #0078D4 !important;
+            color: #FFFFFF !important;
+            border: 1px solid #0078D4 !important;
+            font-weight: 600 !important;
+            border-radius: 6px !important;
+        }}
+        .st-key-ado_btn_carregar_organizacao button:hover {{
+            background-color: #005A9E !important;
+            border-color: #005A9E !important;
+            color: #FFFFFF !important;
+        }}
+        .st-key-ado_btn_carregar_organizacao button:disabled {{
+            background-color: #8fb9d9 !important;
+            border-color: #8fb9d9 !important;
+        }}
+
+        /* ---------- Link "Clique aqui para solicitar acesso" (tela de login) ---------- */
+        /* Mesma técnica de `key=` do container, aplicada ao `st.popover` em
+           login_page.py, pra ele parecer um link de texto em vez de um botão. */
+        .st-key-refu_link_solicitar_acesso button {{
+            background: none !important;
+            border: none !important;
+            box-shadow: none !important;
+            color: {PRIMARY_COLOR} !important;
+            text-decoration: underline;
+            padding: 0 !important;
+            font-size: 0.85rem !important;
+            font-weight: 600 !important;
+        }}
+        .st-key-refu_link_solicitar_acesso button:hover {{
+            color: #D14E1D !important;
+        }}
+
         /* ---------- Expansor de mapeamento de colunas ---------- */
         .mapeamento-caixa {{
             background-color: {SECONDARY_BACKGROUND_COLOR};
             border-radius: 10px;
             padding: 12px 16px;
             border: 1px solid #ecebe6;
+        }}
+
+        /* ==========================================================================
+           Responsividade: telas muito grandes (evita ficar "pequeno e esticado")
+           e telas muito pequenas/mobile (evita títulos grandes demais e má leitura).
+           ========================================================================== */
+
+        /* Telas muito grandes (monitores ultrawide/4K): trava a largura útil do
+           conteúdo central em vez de deixar tudo esticar por toda a tela. */
+        @media (min-width: 1800px) {{
+            .main .block-container {{
+                max-width: 1600px;
+                margin-left: auto;
+                margin-right: auto;
+            }}
+            .refu-header-titulo {{ font-size: 1.2rem; }}
+            .kpi-card .kpi-valor {{ font-size: 2.3rem; }}
+        }}
+
+        /* Tablets/telas pequenas */
+        @media (max-width: 900px) {{
+            .refu-header-titulo {{ font-size: 0.95rem; }}
+            .kpi-card .kpi-valor {{ font-size: 1.7rem; }}
+        }}
+
+        /* Mobile */
+        @media (max-width: 640px) {{
+            .refu-header {{ gap: 10px; padding-bottom: 14px; margin-bottom: 16px; }}
+            .refu-header img {{ height: 32px; }}
+            .refu-header-texto {{ padding: 8px 12px; }}
+            .refu-header-titulo {{ font-size: 0.85rem; }}
+            .refu-header-subtitulo {{ font-size: 0.68rem; }}
+            .kpi-card {{ padding: 12px 14px; }}
+            .kpi-card .kpi-label {{ font-size: 0.68rem; }}
+            .kpi-card .kpi-valor {{ font-size: 1.4rem; margin-top: 2px; }}
+            div[data-testid="stForm"] {{ padding: 20px 16px 14px 16px; }}
+            div[data-testid="stForm"] h3 {{ font-size: 1.05rem; padding-bottom: 12px; }}
+            div[data-testid="stFormSubmitButton"] button {{ padding: 12px 16px !important; font-size: 0.95rem !important; }}
         }}
         </style>
         """,

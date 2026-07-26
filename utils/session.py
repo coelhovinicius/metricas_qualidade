@@ -11,6 +11,17 @@ CHAVES_PADRAO = {
     "mapeamento_colunas": None,
     "mapeamento_confirmado": False,
     "df_status_preparado": None,
+    # ---- Seleção em cascata da busca automática no Azure DevOps ----
+    # O PAT nunca é persistido em disco/secrets - fica só aqui, em memória,
+    # durante a sessão do navegador (ver core/azure_devops_client.py).
+    "azure_pat": "",
+    "azure_organizacao_carregada": None,  # organização já confirmada (após clicar "Carregar")
+    "azure_projetos_disponiveis": [],  # list[Projeto] retornada pela API
+    "azure_projeto_selecionado": None,  # nome do projeto escolhido
+    "azure_area_paths_disponiveis": [],  # list[str]
+    "azure_area_path_selecionado": None,  # "" = nenhum escolhido (campo opcional)
+    "azure_queries_disponiveis": [],  # list[ItemQuery]
+    "azure_query_selecionada_id": None,
 }
 
 
@@ -33,3 +44,20 @@ def resetar_dados_importados() -> None:
     # não deixar o período padrão (último mês) ser recalculado na nova carga.
     st.session_state.pop("filtro_data_inicio", None)
     st.session_state.pop("filtro_data_fim", None)
+
+
+def resetar_selecao_azure_devops(manter_organizacao: bool = False) -> None:
+    """
+    Limpa a cascata de seleção da busca automática no Azure DevOps (projeto,
+    area path e query), usada sempre que um passo anterior muda (ex.: troca
+    de organização ou de projeto invalida o que já tinha sido carregado nos
+    passos seguintes). O PAT nunca é limpo por aqui - só no logout.
+    """
+    if not manter_organizacao:
+        st.session_state["azure_organizacao_carregada"] = None
+    st.session_state["azure_projetos_disponiveis"] = []
+    st.session_state["azure_projeto_selecionado"] = None
+    st.session_state["azure_area_paths_disponiveis"] = []
+    st.session_state["azure_area_path_selecionado"] = None
+    st.session_state["azure_queries_disponiveis"] = []
+    st.session_state["azure_query_selecionada_id"] = None

@@ -76,6 +76,13 @@ PALAVRAS_CHAVE: dict[str, list[str]] = {
     "responsavel": ["responsavel", "executor", "tester", "analista", "assigned to", "atribuido"],
     "caso_teste": ["caso de teste", "id teste", "test case", "cenario", "caso teste", "id caso", "id"],
     "severidade": ["severidade", "prioridade", "criticidade", "severity", "priority"],
+    "coluna_board": [
+        "board column",
+        "coluna do board",
+        "coluna board",
+        "quadro kanban",
+        "kanban board",
+    ],
 }
 
 # Palavras curtas (<=3 caracteres) só devem "casar" como token isolado, para
@@ -161,6 +168,7 @@ class MapeamentoColunas:
     responsavel: Optional[str] = None
     caso_teste: Optional[str] = None
     severidade: Optional[str] = None
+    coluna_board: Optional[str] = None
     campos_personalizados: dict[str, str] = field(default_factory=dict)
     confianca: dict[str, float] = field(default_factory=dict)
 
@@ -175,6 +183,7 @@ class MapeamentoColunas:
             "responsavel": self.responsavel,
             "caso_teste": self.caso_teste,
             "severidade": self.severidade,
+            "coluna_board": self.coluna_board,
         }
 
     def coluna_data_principal(self) -> Optional[str]:
@@ -198,6 +207,7 @@ def detectar_mapeamento(df: pd.DataFrame) -> MapeamentoColunas:
         "responsavel",
         "caso_teste",
         "severidade",
+        "coluna_board",
     ]
 
     for campo in ordem_campos:
