@@ -16,15 +16,15 @@
 credentials:
   usernames:
     admin:
-      name: Vinicius Coelho Bemfica
+      name: admin
       email: vinicius.bemfica@refuturiza.com.br
       password: "$2b$12$DGv8sl.OiOjP5JV4BjnsceH8.8RZe/cnK/WbQjgSrnPdP8XF5dkSu"
     coelhovinicius:
-      name: Vinicius Coelho
+      name: coelhovinicius
       email: coelhovinicius@yahoo.com.br
       password: "$2b$12$eSxbzQ6BbWghwoFxG/f6muNiAnOCKblJOP/Z3IH.mO4oADobS9Zqm"
     convidado:
-      name: Refuturizador
+      name: convidado
       email: vinicius.bemfica@refuturiza.com.br
       password: "$2b$12$JRACBTsgZamS2NuzWoIBHOKdt5Kevm8KaeCPsWOZCAOsuHaRJ8pnm"
 

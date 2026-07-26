@@ -56,6 +56,31 @@ def registrar_solicitacao(nome: str, email: str, justificativa: str) -> None:
     )
 
 
+def existe_solicitacao_pendente_com_email(email: str) -> bool:
+    """
+    True se já existe uma solicitação com status 'pendente' para esse e-mail.
+
+    Usado na tela de login para bloquear o envio de uma segunda solicitação
+    enquanto a primeira ainda não foi analisada pelo administrador (antes
+    disso, era possível mandar várias solicitações pendentes com o mesmo
+    e-mail, poluindo a lista de "Pendentes" do painel administrativo sem
+    necessidade). Comparação por e-mail é sempre feita ignorando
+    maiúsculas/minúsculas (`lower(...)` dos dois lados) - "Fulano@Empresa.com"
+    e "fulano@empresa.com" contam como o mesmo e-mail.
+
+    Solicitações já 'rejeitada' não entram nessa checagem de propósito: se o
+    pedido foi rejeitado, a pessoa deve poder tentar de novo (ex.: corrigindo
+    algo, ou pedindo de novo depois de um tempo) sem ficar bloqueada para
+    sempre por causa de uma tentativa antiga já encerrada.
+    """
+    _garantir_tabela()
+    linhas = executar(
+        f"SELECT COUNT(*) AS total FROM {_TABELA} WHERE status = ? AND lower(email) = lower(?)",
+        [STATUS_PENDENTE, email.strip()],
+    )
+    return bool(linhas) and int(linhas[0]["total"]) > 0
+
+
 def listar_solicitacoes(status: Optional[str] = None) -> list[SolicitacaoConta]:
     _garantir_tabela()
     sql = f"SELECT id, nome, email, justificativa, status, criado_em FROM {_TABELA}"
@@ -70,6 +95,11 @@ def listar_solicitacoes(status: Optional[str] = None) -> list[SolicitacaoConta]:
 
 def atualizar_status(id_solicitacao: int, novo_status: str) -> None:
     executar(f"UPDATE {_TABELA} SET status = ? WHERE id = ?", [novo_status, id_solicitacao])
+
+
+def excluir_solicitacao(id_solicitacao: int) -> None:
+    """Apaga a solicitação de vez (usado nos botões 'Excluir' de Revogadas/Rejeitadas)."""
+    executar(f"DELETE FROM {_TABELA} WHERE id = ?", [id_solicitacao])
 
 
 def testar_conexao() -> None:

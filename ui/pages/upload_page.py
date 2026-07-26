@@ -53,12 +53,26 @@ def render_upload_page() -> None:
         subtitulo="Envie um arquivo .csv/.txt ou busque automaticamente do Azure DevOps.",
     )
 
+    # O Streamlit "esquece" o valor de um widget sempre que ele deixa de ser
+    # renderizado por pelo menos uma execução do script (ex.: o usuário foi
+    # pra outra página do menu, onde este `st.radio` não é chamado) - ao
+    # voltar, o widget nasce de novo do zero e cairia sempre na 1ª opção
+    # ("Enviar arquivo"), escondendo todo o passo a passo do Azure DevOps já
+    # configurado antes. Por isso o valor escolhido é espelhado numa chave
+    # "solta" (não presa a nenhum widget, então nunca é esquecida) e usada
+    # como valor inicial (`index=`) sempre que o widget nascer de novo.
+    opcoes_origem = [OPCAO_ORIGEM_MANUAL, OPCAO_ORIGEM_AZURE]
+    origem_persistida = st.session_state.get("origem_importacao_persistida", OPCAO_ORIGEM_MANUAL)
+    indice_origem = opcoes_origem.index(origem_persistida) if origem_persistida in opcoes_origem else 0
+
     origem = st.radio(
         "Como deseja importar os dados?",
-        options=[OPCAO_ORIGEM_MANUAL, OPCAO_ORIGEM_AZURE],
+        options=opcoes_origem,
+        index=indice_origem,
         key="origem_importacao",
         horizontal=True,
     )
+    st.session_state["origem_importacao_persistida"] = origem
 
     if origem == OPCAO_ORIGEM_MANUAL:
         _renderizar_importacao_manual()
@@ -123,9 +137,17 @@ def _renderizar_importacao_azure_devops() -> None:
         "depois selecione uma query já existente para trazer os dados."
     )
 
+    # Mesmo cuidado do `origem_importacao` acima: o campo de PAT também é um
+    # widget, e o Streamlit esquece o valor de um widget que não é renderizado
+    # por pelo menos uma execução do script (ex.: o usuário foi pra outra
+    # página do menu). Sem isso, o usuário seria obrigado a colar o PAT de
+    # novo toda vez que voltasse à tela de importação depois de navegar por
+    # outro menu - mesmo o PAT continua só em memória desta sessão do
+    # navegador (nunca em disco), exatamente como já era.
     st.text_input(
         "Seu Personal Access Token (PAT) do Azure DevOps",
         type="password",
+        value=st.session_state.get("azure_pat_persistido", ""),
         key="azure_pat",
         placeholder="Cole aqui o seu PAT pessoal",
         help=(
@@ -136,6 +158,7 @@ def _renderizar_importacao_azure_devops() -> None:
         ),
     )
     pat = st.session_state.get("azure_pat", "")
+    st.session_state["azure_pat_persistido"] = pat
 
     # ---------------------------------------------------- Passo 1: Organização (obrigatório)
     col_org, col_botao_org = st.columns([3, 1])
@@ -167,6 +190,7 @@ def _renderizar_importacao_azure_devops() -> None:
                 resetar_selecao_azure_devops()
                 projetos = listar_projetos(organizacao_escolhida, pat)
                 st.session_state["azure_organizacao_carregada"] = organizacao_escolhida
+                st.session_state["azure_ultima_organizacao_usada"] = organizacao_escolhida
                 st.session_state["azure_projetos_disponiveis"] = projetos
                 st.session_state["erro_carga"] = None
             except AzureDevOpsError as erro:
@@ -176,6 +200,21 @@ def _renderizar_importacao_azure_devops() -> None:
 
     organizacao_carregada = st.session_state.get("azure_organizacao_carregada")
     if not organizacao_carregada:
+        # Auto-recuperação: a organização já tinha sido carregada antes nesta
+        # mesma sessão do navegador, mas esse passo foi perdido por algum
+        # motivo (ex.: alguma navegação em outra parte do app limpou o
+        # estado) - recarrega automaticamente pra não obrigar o usuário a
+        # clicar em "Carregar organização" de novo só porque foi em outro menu.
+        ultima_organizacao = st.session_state.get("azure_ultima_organizacao_usada")
+        if pat and ultima_organizacao:
+            with loading_overlay("Restaurando organização usada anteriormente, aguarde..."):
+                try:
+                    projetos = listar_projetos(ultima_organizacao, pat)
+                    st.session_state["azure_organizacao_carregada"] = ultima_organizacao
+                    st.session_state["azure_projetos_disponiveis"] = projetos
+                except AzureDevOpsError:
+                    return
+            st.rerun()
         return
 
     # ---------------------------------------------------- Passo 2: Projeto (obrigatório)
@@ -183,6 +222,37 @@ def _renderizar_importacao_azure_devops() -> None:
     opcoes_projeto = ["---"] + [projeto.nome for projeto in projetos_disponiveis]
 
     projeto_atual = st.session_state.get("azure_projeto_selecionado")
+
+    # Auto-recuperação: se nenhum projeto está selecionado agora mas o
+    # usuário já tinha escolhido um antes nesta mesma sessão do navegador (e
+    # não foi ele mesmo que limpou a seleção de propósito agora, escolhendo
+    # "---"), restaura automaticamente esse projeto e o que vinha depois dele
+    # (Area Path e Query). Assim, voltar a esta tela depois de gerar os
+    # gráficos e navegar por outros menus sempre mostra a configuração de
+    # verdade em uso — e a partir daí o usuário pode trocar qualquer campo
+    # livremente, em tempo real, sem precisar refazer os passos manualmente.
+    limpou_manualmente = st.session_state.pop("azure_projeto_limpo_manualmente", False)
+    if not projeto_atual and not limpou_manualmente:
+        ultimo_projeto = st.session_state.get("azure_ultimo_projeto_usado")
+        if ultimo_projeto and ultimo_projeto in opcoes_projeto:
+            with loading_overlay("Restaurando projeto usado anteriormente, aguarde..."):
+                try:
+                    area_paths = listar_area_paths(organizacao_carregada, ultimo_projeto, pat)
+                    queries = listar_queries(organizacao_carregada, ultimo_projeto, pat)
+                    st.session_state["azure_projeto_selecionado"] = ultimo_projeto
+                    st.session_state["azure_area_paths_disponiveis"] = area_paths
+                    ultimo_area_path = st.session_state.get("azure_ultimo_area_path_usado")
+                    st.session_state["azure_area_path_selecionado"] = (
+                        ultimo_area_path if ultimo_area_path in area_paths else None
+                    )
+                    st.session_state["azure_queries_disponiveis"] = queries
+                    mapa_queries_restauro = {item.caminho: item.id for item in queries}
+                    ultima_query = st.session_state.get("azure_ultima_query_usada")
+                    st.session_state["azure_query_selecionada_id"] = mapa_queries_restauro.get(ultima_query)
+                except AzureDevOpsError:
+                    pass
+            st.rerun()
+
     indice_projeto = opcoes_projeto.index(projeto_atual) if projeto_atual in opcoes_projeto else 0
 
     projeto_escolhido = st.selectbox(
@@ -201,6 +271,7 @@ def _renderizar_importacao_azure_devops() -> None:
                 area_paths = listar_area_paths(organizacao_carregada, projeto_escolhido, pat)
                 queries = listar_queries(organizacao_carregada, projeto_escolhido, pat)
                 st.session_state["azure_projeto_selecionado"] = projeto_escolhido
+                st.session_state["azure_ultimo_projeto_usado"] = projeto_escolhido
                 st.session_state["azure_area_paths_disponiveis"] = area_paths
                 st.session_state["azure_area_path_selecionado"] = None
                 st.session_state["azure_queries_disponiveis"] = queries
@@ -211,6 +282,7 @@ def _renderizar_importacao_azure_devops() -> None:
         st.rerun()
     elif projeto_escolhido == "---" and projeto_atual is not None:
         resetar_selecao_azure_devops(manter_organizacao=True)
+        st.session_state["azure_projeto_limpo_manualmente"] = True
         st.rerun()
 
     projeto_selecionado = st.session_state.get("azure_projeto_selecionado")
@@ -227,7 +299,13 @@ def _renderizar_importacao_azure_devops() -> None:
         "Area Path do Board no Projeto (opcional)",
         options=opcoes_area_path,
         index=indice_area_path,
-        key="azure_area_path_input",
+        # A chave inclui o projeto atual de propósito: o Streamlit, quando um
+        # combobox já tinha um valor selecionado, às vezes mantém esse texto
+        # na tela mesmo depois de trocar as opções (aqui, ao trocar de
+        # projeto) e de recalcular o `index=` - forçar uma chave nova junto
+        # com a troca de projeto faz o Streamlit tratar como um combobox
+        # realmente novo, evitando esse valor "fantasma" da seleção antiga.
+        key=f"azure_area_path_input__{projeto_selecionado}",
     )
     st.caption(
         "Campo opcional. Se você escolher um Area Path aqui, o app filtra os work items "
@@ -235,19 +313,36 @@ def _renderizar_importacao_azure_devops() -> None:
         "sub-caminhos). Se deixar em **---**, nenhum filtro extra de Area Path é aplicado "
         "— vale o que a própria query já retorna."
     )
-    st.session_state["azure_area_path_selecionado"] = None if area_path_escolhido == "---" else area_path_escolhido
+    novo_area_path = None if area_path_escolhido == "---" else area_path_escolhido
+    st.session_state["azure_area_path_selecionado"] = novo_area_path
+    if novo_area_path:
+        st.session_state["azure_ultimo_area_path_usado"] = novo_area_path
 
     # ---------------------------------------------- Passo 4: Query existente (obrigatório p/ buscar)
     queries_disponiveis = st.session_state.get("azure_queries_disponiveis", [])
     mapa_queries = {item.caminho: item.id for item in queries_disponiveis}
     opcoes_query = ["---"] + list(mapa_queries.keys())
 
+    # Mesmo raciocínio do Projeto/Area Path acima: sem calcular o `index=` a
+    # partir do que já estava selecionado (`azure_query_selecionada_id`), esse
+    # combobox nasceria sempre em "---" ao ser recriado (ex.: depois de
+    # navegar por outro menu) - e, pior, a linha abaixo que espelha o valor
+    # escolhido de volta pro session_state acabaria apagando a query que já
+    # estava selecionada, mesmo sem o usuário ter tocado no campo.
+    query_id_atual = st.session_state.get("azure_query_selecionada_id")
+    caminho_atual = next(
+        (caminho for caminho, id_query in mapa_queries.items() if id_query == query_id_atual),
+        "---",
+    ) if query_id_atual else "---"
+    indice_query = opcoes_query.index(caminho_atual) if caminho_atual in opcoes_query else 0
+
     col_query, col_atualizar, col_link = st.columns([3, 1, 1])
     with col_query:
         query_escolhida_caminho = st.selectbox(
             "Query salva no Azure DevOps",
             options=opcoes_query,
-            key="azure_query_input",
+            index=indice_query,
+            key=f"azure_query_input__{projeto_selecionado}",  # mesmo motivo do Area Path acima
         )
     with col_atualizar:
         st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
@@ -285,6 +380,8 @@ def _renderizar_importacao_azure_devops() -> None:
     st.session_state["azure_query_selecionada_id"] = (
         mapa_queries[query_escolhida_caminho] if query_escolhida_caminho != "---" else None
     )
+    if query_escolhida_caminho != "---":
+        st.session_state["azure_ultima_query_usada"] = query_escolhida_caminho
 
     if not queries_disponiveis:
         st.info(

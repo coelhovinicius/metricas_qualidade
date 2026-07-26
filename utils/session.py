@@ -22,6 +22,19 @@ CHAVES_PADRAO = {
     "azure_area_path_selecionado": None,  # "" = nenhum escolhido (campo opcional)
     "azure_queries_disponiveis": [],  # list[ItemQuery]
     "azure_query_selecionada_id": None,
+    # ---- Memória do último valor realmente usado em cada passo ----
+    # Ao contrário das chaves acima (que representam o passo "em andamento"
+    # e são limpas por resetar_selecao_azure_devops quando um passo anterior
+    # muda), estas guardam o último valor de verdade escolhido pelo usuário
+    # nesta sessão do navegador e NUNCA são limpas por resetar_selecao_azure_devops.
+    # Servem só para a tela de importação conseguir se auto-recuperar (ver
+    # upload_page.py) caso a cascata de seleção seja perdida por algum motivo
+    # externo (ex.: navegação entre páginas), sem obrigar o usuário a refazer
+    # manualmente todos os passos.
+    "azure_ultima_organizacao_usada": None,
+    "azure_ultimo_projeto_usado": None,
+    "azure_ultimo_area_path_usado": None,
+    "azure_ultima_query_usada": None,
 }
 
 
@@ -51,7 +64,10 @@ def resetar_selecao_azure_devops(manter_organizacao: bool = False) -> None:
     Limpa a cascata de seleção da busca automática no Azure DevOps (projeto,
     area path e query), usada sempre que um passo anterior muda (ex.: troca
     de organização ou de projeto invalida o que já tinha sido carregado nos
-    passos seguintes). O PAT nunca é limpo por aqui - só no logout.
+    passos seguintes). O PAT nunca é limpo por aqui - só no logout. As chaves
+    de memória "azure_ultimo(a)_*_usado(a)" também nunca são limpas por esta
+    função de propósito - são o que permite a tela de importação se
+    auto-recuperar depois (ver upload_page.py).
     """
     if not manter_organizacao:
         st.session_state["azure_organizacao_carregada"] = None

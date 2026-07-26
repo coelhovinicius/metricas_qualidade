@@ -164,6 +164,54 @@ def injetar_css_global() -> None:
             box-shadow: 0 2px 12px rgba(0,0,0,0.05);
         }}
 
+        /* ---------- Espaçamentos mais compactos SÓ na tela de login ---------- */
+        /* Objetivo: caber a tela inteira (até o botão "Solicitar acesso") sem
+           precisar de F11 (tela cheia) num navegador em janela normal. O
+           Streamlit reserva, por padrão, uma margem grande no topo do
+           conteúdo principal (`padding-top` de ~96px, espaço pra uma barra de
+           ferramentas que este app não usa) - some com boa parte do espaço
+           disponível antes mesmo do cabeçalho aparecer.
+
+           `:has()` (suportado por Chrome/Edge/Firefox atuais) permite mirar o
+           contêiner principal (`stMainBlockContainer`) só QUANDO ele contém a
+           marca `st-key-refu_tela_login` - ou seja, só na tela de login,
+           deixando o espaçamento padrão intacto em todas as outras páginas do
+           app (dashboard, importação, admin, etc.), que não têm esse
+           problema e não devem ser afetadas por este ajuste. */
+        /* 68px, não menos: o Streamlit desenha uma barra fixa no topo
+           (ícone de menu, "Deploy" em modo desenvolvimento, etc.) com
+           `position: absolute` e 60px de altura - ela não empurra o conteúdo
+           pra baixo sozinha (`position: absolute` não ocupa espaço no fluxo
+           normal), então um `padding-top` menor que a altura dela faz o
+           cabeçalho da tela de login ficar por BAIXO dessa barra, cortado -
+           68px = 60px da barra + uma folga pequena. */
+        .stMainBlockContainer:has(.st-key-refu_tela_login) {{
+            padding-top: 68px !important;
+            padding-bottom: 40px !important;
+        }}
+        .st-key-refu_tela_login .refu-header {{
+            padding: 4px 0 8px 0 !important;
+            margin-bottom: 10px !important;
+        }}
+        .st-key-refu_tela_login div[data-testid="stForm"] {{
+            padding: 16px 32px 12px 32px !important;
+        }}
+        .st-key-refu_tela_login div[data-testid="stForm"] h3 {{
+            padding: 2px 0 10px 0 !important;
+            margin-bottom: 12px !important;
+        }}
+        .st-key-refu_tela_login div[data-testid="stCaptionContainer"] {{
+            margin: 2px 0 !important;
+        }}
+        /* Espaço entre os campos (Usuário/Senha/botão "Entrar") dentro do
+           formulário, e entre os blocos fora dele (cartão do formulário,
+           aviso de status, aviso de conta, botão "Solicitar acesso") - o
+           padrão do Streamlit (16px) é confortável, mas em telas mais baixas
+           ainda ajuda economizar um pouco aqui. */
+        .st-key-refu_tela_login div[data-testid="stVerticalBlock"] {{
+            gap: 10px !important;
+        }}
+
         /* ---------- Título "Acesso ao Painel de Qualidade" ---------- */
         /* Antes tinha fundo laranja com fonte branca - agora é texto escuro sem
            fundo, só com uma linha fina abaixo pra separar do formulário. */
@@ -180,6 +228,37 @@ def injetar_css_global() -> None:
         }}
 
         /* ---------- Botão "Entrar" do formulário de login: laranja, largura total ---------- */
+        /* A lib de autenticação (streamlit-authenticator) monta o botão "Entrar"
+           dentro de uma coluna interna própria - se essa coluna for mais estreita
+           que o formulário (comum em libs de login mais antigas, que reservam só
+           uma fração da largura pro botão), só dar `width: 100%` no botão não
+           basta, porque 100% de uma coluna estreita continua estreito. Por isso,
+           além de esticar o botão em si, força QUALQUER coluna dentro do
+           formulário de login a ocupar a largura inteira (o formulário de login
+           não tem nenhum layout lado-a-lado de propósito, então isso é seguro
+           aqui - diferente do resto do app, onde colunas lado a lado são usadas
+           de propósito e não devem ser afetadas). */
+        div[data-testid="stForm"] div[data-testid="stHorizontalBlock"] {{
+            display: block !important;
+        }}
+        div[data-testid="stForm"] div[data-testid="column"] {{
+            width: 100% !important;
+            flex: 1 1 100% !important;
+            min-width: 100% !important;
+        }}
+        /* Streamlit recentes encolhem o `stElementContainer` que embrulha o
+           botão para o tamanho do próprio texto ("Entrar"), em vez de esticar
+           pra largura do formulário - dar `width: 100%` só no botão (abaixo)
+           não resolve, porque 100% de um contêiner que já encolheu pro
+           conteúdo continua do tamanho do conteúdo. `:has()` acha esse
+           contêiner específico (o que tem um `stFormSubmitButton` dentro),
+           sem depender do nome de classe interno gerado a partir da label do
+           botão (que muda se o texto "Entrar" mudar, e não é uma API
+           garantida do Streamlit). */
+        div[data-testid="stForm"] div[data-testid="stElementContainer"]:has(div[data-testid="stFormSubmitButton"]) {{
+            width: 100% !important;
+            flex: 1 1 100% !important;
+        }}
         div[data-testid="stFormSubmitButton"] {{
             width: 100%;
             margin-top: 6px;
@@ -205,20 +284,37 @@ def injetar_css_global() -> None:
            da aplicação, como o formulário de solicitação de conta). Aplica pra
            toda a aplicação (Usuário/Senha do login, PAT do Azure DevOps, campos
            do formulário de solicitação de conta, etc.), não só a tela de login.
-           Estiliza o `<input>`/`<textarea>` nativo diretamente em vez de tentar
-           acertar o nome exato do wrapper interno do BaseWeb (que muda de
-           versão pra versão do Streamlit e por isso não pegou na primeira
-           tentativa) - `data-testid="stTextInput"/"stTextArea"` são estáveis
-           (API do próprio Streamlit), o elemento `<input>`/`<textarea>` dentro
-           deles sempre existe. */
-        div[data-testid="stTextInput"] input,
+
+           Campos de senha (`Senha`, no login) têm um botão nativo de
+           "mostrar/ocultar senha" (o ícone de olho) - o Streamlit desenha esse
+           botão DENTRO de um contêiner próprio, `stTextInputRootElement`, que
+           é mais largo que o `<input>` (reserva espaço extra à direita pro
+           ícone). Contornar o `<input>` diretamente (como era feito antes)
+           deixa esse espaço do ícone FORA do contorno - visualmente parecia
+           que a borda direita da caixa estava cortada/incompleta, bem antes
+           de chegar no canto real do campo. Por isso o contorno vai no
+           `stTextInputRootElement` (o contêiner que já inclui o ícone), e o
+           `<input>` em si fica sem borda própria/com fundo transparente, pra
+           não desenhar dois contornos um dentro do outro. `stTextArea` não
+           tem esse botão de olho, então continua sendo contornado direto no
+           `<textarea>` mesmo, sem problema. */
+        div[data-testid="stTextInput"] div[data-testid="stTextInputRootElement"] {{
+            border: 1.5px solid #a8a196 !important;
+            border-radius: 8px !important;
+            background-color: #FFFFFF !important;
+        }}
+        div[data-testid="stTextInput"] input {{
+            border: none !important;
+            background-color: transparent !important;
+            padding: 10px 12px !important;
+        }}
         div[data-testid="stTextArea"] textarea {{
             border: 1.5px solid #a8a196 !important;
             border-radius: 8px !important;
             background-color: #FFFFFF !important;
             padding: 10px 12px !important;
         }}
-        div[data-testid="stTextInput"] input:focus,
+        div[data-testid="stTextInput"] div[data-testid="stTextInputRootElement"]:focus-within,
         div[data-testid="stTextArea"] textarea:focus {{
             border-color: {PRIMARY_COLOR} !important;
             box-shadow: 0 0 0 1px {PRIMARY_COLOR}55 !important;
@@ -259,21 +355,25 @@ def injetar_css_global() -> None:
             border-color: #8fb9d9 !important;
         }}
 
-        /* ---------- Link "Clique aqui para solicitar acesso" (tela de login) ---------- */
-        /* Mesma técnica de `key=` do container, aplicada ao `st.popover` em
-           login_page.py, pra ele parecer um link de texto em vez de um botão. */
-        .st-key-refu_link_solicitar_acesso button {{
-            background: none !important;
+        /* ---------- Botão "Solicitar acesso" (tela de login) ---------- */
+        /* Mesma técnica de `key=` do container, aplicada ao botão em
+           login_page.py - laranja com fonte branca, igual ao "Entrar", já que
+           agora ele abre um modal (`st.dialog`) em vez de expandir um texto de
+           link. */
+        .st-key-refu_btn_solicitar_acesso button {{
+            width: 100% !important;
+            background-color: {PRIMARY_COLOR} !important;
+            color: #FFFFFF !important;
             border: none !important;
-            box-shadow: none !important;
-            color: {PRIMARY_COLOR} !important;
-            text-decoration: underline;
-            padding: 0 !important;
-            font-size: 0.85rem !important;
             font-weight: 600 !important;
+            font-size: 0.95rem !important;
+            padding: 10px 20px !important;
+            border-radius: 10px !important;
+            margin-top: 6px;
         }}
-        .st-key-refu_link_solicitar_acesso button:hover {{
-            color: #D14E1D !important;
+        .st-key-refu_btn_solicitar_acesso button:hover {{
+            background-color: #D14E1D !important;
+            color: #FFFFFF !important;
         }}
 
         /* ---------- Expansor de mapeamento de colunas ---------- */
