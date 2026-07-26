@@ -98,13 +98,50 @@ def _tratar_erro_http(resposta: requests.Response) -> None:
         )
 
 
+def _decodificar_json(resposta: requests.Response) -> dict:
+    """
+    Faz `resposta.json()` de forma segura, convertendo uma falha de decodificação
+    num `AzureDevOpsError` (com uma mensagem que ajuda a diagnosticar o motivo)
+    em vez de deixar o `JSONDecodeError` cru estourar - esse erro cru não é
+    pego pelos `except AzureDevOpsError` espalhados pela interface, então
+    derrubava a página inteira do Streamlit em vez de mostrar um aviso.
+
+    HTTP OK (2xx) com corpo que não é JSON válido geralmente significa que a
+    resposta não veio da API de verdade, e sim de uma camada na frente dela -
+    o caso mais comum é uma política de Conditional Access/restrição de IP no
+    Azure AD da organização, que devolve uma página HTML de login/bloqueio em
+    vez dos dados, porque o servidor de onde o app está rodando (ex.: Streamlit
+    Community Cloud) não é reconhecido como uma origem confiável - mesmo com
+    PAT válido. É por isso que costuma funcionar rodando local (rede/IP
+    confiável) e falhar em produção.
+    """
+    try:
+        return resposta.json()
+    except ValueError as exc:
+        trecho = resposta.text[:300].strip()
+        pista = ""
+        if "<html" in trecho.lower() or "<!doctype html" in trecho.lower():
+            pista = (
+                " O Azure DevOps devolveu uma página HTML em vez de dados - isso costuma "
+                "acontecer quando a organização tem uma política de Conditional Access ou "
+                "restrição de IP no Azure AD que bloqueia o servidor onde este app está "
+                "rodando (diferente da rede de onde você testou localmente). Vale confirmar "
+                "com quem administra o Azure AD/Azure DevOps da organização se existe essa "
+                "restrição, e se o endereço de onde o app roda pode ser liberado."
+            )
+        raise AzureDevOpsError(
+            f"O Azure DevOps respondeu (HTTP {resposta.status_code}), mas o conteúdo não é "
+            f"um JSON válido.{pista} Início da resposta recebida: \"{trecho}\""
+        ) from exc
+
+
 def _get(url: str, pat: str) -> dict:
     try:
         resposta = requests.get(url, auth=_autenticacao(pat), timeout=TIMEOUT_SEGUNDOS)
     except requests.RequestException as exc:
         raise AzureDevOpsError(f"Não foi possível conectar ao Azure DevOps: {exc}") from exc
     _tratar_erro_http(resposta)
-    return resposta.json()
+    return _decodificar_json(resposta)
 
 
 def listar_projetos(organization: str, pat: str) -> list[Projeto]:
@@ -239,7 +276,7 @@ def _buscar_campos_em_lotes(organization: str, ids: list[int], pat: str) -> list
             raise AzureDevOpsError(f"Falha ao buscar work items do Azure DevOps: {exc}") from exc
 
         _tratar_erro_http(resposta)
-        resultados.extend(resposta.json().get("value", []))
+        resultados.extend(_decodificar_json(resposta).get("value", []))
 
     return resultados
 
