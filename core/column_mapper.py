@@ -100,6 +100,16 @@ def _normalizar(texto: str) -> str:
     return texto
 
 
+def normalizar_texto(texto: str) -> str:
+    """
+    Versão pública de `_normalizar`: minúsculas e sem acento, para comparar
+    dois textos ignorando acentuação e caixa (ex.: "Pronto para QA" e
+    "pronto para qa" viram o mesmo texto). Usado fora deste módulo por
+    `core/analytics.py` para casar nomes de coluna do board do Kanban.
+    """
+    return _normalizar(texto)
+
+
 def _tokens(texto: str) -> list[str]:
     return re.split(r"[^a-z0-9]+", texto)
 

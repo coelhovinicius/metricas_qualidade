@@ -23,6 +23,7 @@ from core.column_mapper import (
     eh_status_binario_reconhecivel,
     extrair_nome_de_email,
     normalizar_status,
+    normalizar_texto,
     simplificar_valor_projeto,
 )
 
@@ -58,6 +59,84 @@ _CAMPOS_ROTULAVEIS = ("projeto", "responsavel", "tipo_teste", "severidade", "col
 
 _VALORES_CONSIDERADOS_VAZIOS = {"", "nan", "none", "null", "nat", "<na>"}
 
+# Ordem "oficial" das colunas do board Kanban, do início ao fim do fluxo de
+# trabalho - informada pelo usuário, refletindo o board real usado no Azure
+# DevOps. Serve para duas coisas:
+#   1) Ordenar os gráficos de Coluna do Board na ordem real do fluxo
+#      (Backlog -> Finalizado), em vez de por quantidade ou ordem
+#      alfabética - só assim dá pra enxergar o funil/gargalo de verdade;
+#   2) Juntar variações de acentuação/maiúsculas-minúsculas do mesmo nome de
+#      coluna como uma coluna só (ex.: "Pronto para QA", "pronto para qa" e
+#      "PRONTO PARA QA" contam juntas) - times diferentes podem ter digitado
+#      o nome da coluna de formas ligeiramente diferentes ao configurar o
+#      board no Azure DevOps.
+#
+# Importante: esta lista NUNCA descarta nem esconde uma coluna real que não
+# esteja nela - times com colunas de board diferentes destas (nomes
+# próprios, outro fluxo) continuam aparecendo nos gráficos exatamente como
+# vieram do Azure DevOps, só ficam ordenados depois das colunas reconhecidas
+# (ver `ordem_coluna_board`/`canonizar_coluna_board`).
+ORDEM_COLUNAS_BOARD: list[str] = [
+    "Backlog",
+    "Em Refinamento de Negócios",
+    "Pronto para Refinamento Técnico",
+    "Em Refinamento Técnico",
+    "Pronto para Validação de Produtos",
+    "Em Validação de Produtos",
+    "Pronto para Dev",
+    "Em Desenvolvimento",
+    "Pronto para Code Review",
+    "Code Review",
+    "Pronto para QA",
+    "Teste QA",
+    "Pronto para UAT",
+    "Teste UAT",
+    "Aguardando CAB",
+    "Aguardando Subida em Produção",
+    "Testes em Produção",
+    "Cancelados",
+    "Finalizado",
+]
+
+_ORDEM_COLUNAS_BOARD_POR_TEXTO_NORMALIZADO: dict[str, int] = {
+    normalizar_texto(nome): indice for indice, nome in enumerate(ORDEM_COLUNAS_BOARD)
+}
+
+
+def canonizar_coluna_board(valor: object) -> object:
+    """
+    Casa um valor de Coluna do Board vindo do Azure DevOps com o nome
+    "oficial" em `ORDEM_COLUNAS_BOARD`, ignorando acentuação e
+    maiúsculas/minúsculas. Quando bate, devolve o nome oficial (com a
+    grafia padronizada); quando não bate com nenhum nome conhecido, devolve
+    o valor original sem nenhuma alteração - nunca inventa nem descarta uma
+    coluna real do board só por ela não estar na lista.
+    """
+    if pd.isna(valor):
+        return valor
+    texto = str(valor).strip()
+    if not texto:
+        return valor
+    indice = _ORDEM_COLUNAS_BOARD_POR_TEXTO_NORMALIZADO.get(normalizar_texto(texto))
+    return ORDEM_COLUNAS_BOARD[indice] if indice is not None else texto
+
+
+def ordem_coluna_board(valor: object) -> tuple[int, str]:
+    """
+    Chave de ordenação para a Coluna do Board: colunas reconhecidas em
+    `ORDEM_COLUNAS_BOARD` vêm primeiro, na ordem real do fluxo; colunas
+    desconhecidas (nomes próprios de outro time) vêm em seguida, em ordem
+    alfabética; "Não atribuído(a)" (rótulo de célula vazia) sempre por
+    último.
+    """
+    texto = str(valor)
+    if texto == ROTULO_VAZIO_PADRAO:
+        return (len(ORDEM_COLUNAS_BOARD) + 1, texto)
+    indice = _ORDEM_COLUNAS_BOARD_POR_TEXTO_NORMALIZADO.get(normalizar_texto(texto))
+    if indice is not None:
+        return (indice, texto)
+    return (len(ORDEM_COLUNAS_BOARD), texto)
+
 
 def _rotular_valores_vazios(serie: pd.Series, rotulo: str = ROTULO_VAZIO_PADRAO) -> pd.Series:
     """
@@ -83,6 +162,10 @@ def preparar_dados(df: pd.DataFrame, mapeamento: MapeamentoColunas) -> pd.DataFr
         - Simplifica a coluna de projeto quando ela vem de uma hierarquia de
           Area Path ou de uma coluna com múltiplos valores (ex.: Tags usada
           como aproximação de projeto);
+        - Casa a coluna do board com o nome "oficial" da etapa do fluxo
+          (ex.: "pronto para qa" e "Pronto Para QA" viram "Pronto para QA"),
+          ignorando acentuação e maiúsculas/minúsculas - ver
+          `ORDEM_COLUNAS_BOARD`/`canonizar_coluna_board`;
         - Rotula valores vazios de Projeto/Responsável/Tipo de Teste/
           Severidade como "Não atribuído(a)" (em vez de célula em branco);
         - Converte colunas de data para o tipo data (sem hora);
@@ -98,6 +181,9 @@ def preparar_dados(df: pd.DataFrame, mapeamento: MapeamentoColunas) -> pd.DataFr
 
     if mapeamento.projeto and mapeamento.projeto in df.columns:
         df[mapeamento.projeto] = df[mapeamento.projeto].apply(simplificar_valor_projeto)
+
+    if mapeamento.coluna_board and mapeamento.coluna_board in df.columns:
+        df[mapeamento.coluna_board] = df[mapeamento.coluna_board].apply(canonizar_coluna_board)
 
     for campo in _CAMPOS_ROTULAVEIS:
         coluna = getattr(mapeamento, campo)
@@ -359,6 +445,14 @@ def distribuicao_coluna_board(df: pd.DataFrame, mapeamento: MapeamentoColunas) -
     e aparecem na distribuição como uma categoria própria, em vez de sumir
     silenciosamente - assim fica claro que parte dos itens não tem coluna de
     board associada, em vez de parecer que a contagem está errada.
+
+    A ordenação segue o fluxo real do board (Backlog -> Finalizado, ver
+    `ORDEM_COLUNAS_BOARD`) em vez de quantidade ou ordem alfabética - assim
+    dá pra enxergar onde está o gargalo. Colunas com nome próprio (fora
+    dessa lista) aparecem depois das reconhecidas, e "Não atribuído(a)"
+    sempre por último. A junção de variações de acentuação/maiúsculas já
+    aconteceu em `preparar_dados` (ver `canonizar_coluna_board`), então aqui
+    é só agrupar e ordenar.
     """
     if not mapeamento.coluna_board or mapeamento.coluna_board not in df.columns:
         return None
@@ -367,8 +461,9 @@ def distribuicao_coluna_board(df: pd.DataFrame, mapeamento: MapeamentoColunas) -
         .size()
         .reset_index(name="Quantidade")
         .rename(columns={mapeamento.coluna_board: "Coluna do Board"})
-        .sort_values("Quantidade", ascending=False)
     )
+    resultado["__ordem__"] = resultado["Coluna do Board"].apply(ordem_coluna_board)
+    resultado = resultado.sort_values("__ordem__").drop(columns="__ordem__").reset_index(drop=True)
     return resultado
 
 
@@ -388,6 +483,10 @@ def distribuicao_area_path_x_coluna_board(
 
     Depende dos dois campos estarem mapeados (Projeto e Coluna do Board) -
     sem um dos dois, não tem como cruzar, e a função devolve `None`.
+
+    Dentro de cada Projeto, as colunas ficam na ordem real do fluxo do board
+    (Backlog -> Finalizado, ver `ORDEM_COLUNAS_BOARD`) em vez de por
+    quantidade - mesmo critério de `distribuicao_coluna_board`.
     """
     if not mapeamento.projeto or mapeamento.projeto not in df.columns:
         return None
@@ -398,6 +497,51 @@ def distribuicao_area_path_x_coluna_board(
         .size()
         .reset_index(name="Quantidade")
         .rename(columns={mapeamento.projeto: "Projeto", mapeamento.coluna_board: "Coluna do Board"})
+    )
+    resultado["__ordem__"] = resultado["Coluna do Board"].apply(ordem_coluna_board)
+    resultado = (
+        resultado.sort_values(["Projeto", "__ordem__"])
+        .drop(columns="__ordem__")
+        .reset_index(drop=True)
+    )
+    return resultado
+
+
+def distribuicao_area_path_x_status(
+    df: pd.DataFrame, mapeamento: MapeamentoColunas
+) -> Optional[pd.DataFrame]:
+    """
+    Cruza Projeto/Area Path com Status: quantos work items de cada Area Path
+    estão em cada valor de status - ex.: "BACKOFFICE tem 8 em New e 3 em
+    Closed, enquanto Bug Team tem 5 em UAT e 2 em Deploy".
+
+    Existe porque times diferentes dentro da mesma organização do Azure
+    DevOps podem usar templates de processo (Basic/Agile/Scrum/CMMI ou
+    customizados) com vocabulários de State completamente diferentes entre
+    si - não é incomum um time usar só New/Active/Closed enquanto outro usa
+    estados próprios como "UAT", "QA" ou "Deploy" dentro do campo
+    System.State (Status), o que é uma configuração legítima do Azure
+    DevOps e não tem nenhuma relação com a Coluna do Board (outro campo,
+    `System.BoardColumn`, buscado e mapeado separadamente - ver
+    `distribuicao_coluna_board`). Quando vários Area Paths com processos
+    diferentes são selecionados juntos, a distribuição geral de Status
+    (`distribuicao_status_bruto`) mistura naturalmente esses vocabulários
+    num único gráfico; esta função permite discriminar visualmente qual
+    Area Path contribui com qual valor, deixando claro que não é uma mistura
+    indevida de campos.
+
+    Depende dos dois campos estarem mapeados (Projeto e Status) - sem um dos
+    dois, não tem como cruzar, e a função devolve `None`.
+    """
+    if not mapeamento.projeto or mapeamento.projeto not in df.columns:
+        return None
+    if not mapeamento.status or mapeamento.status not in df.columns:
+        return None
+    resultado = (
+        df.groupby([mapeamento.projeto, mapeamento.status], dropna=False)
+        .size()
+        .reset_index(name="Quantidade")
+        .rename(columns={mapeamento.projeto: "Projeto", mapeamento.status: "Status"})
         .sort_values(["Projeto", "Quantidade"], ascending=[True, False])
     )
     return resultado

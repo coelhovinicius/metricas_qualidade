@@ -166,7 +166,24 @@ def _construir_grafico_pareto(df: pd.DataFrame, x: str, y: str) -> go.Figure:
     return fig
 
 
-def _plotar(df: pd.DataFrame, tipo: str, x: str, y: str, chave: str, cor: Optional[str] = None) -> None:
+def _plotar(
+    df: pd.DataFrame,
+    tipo: str,
+    x: str,
+    y: str,
+    chave: str,
+    cor: Optional[str] = None,
+    ordem_categorias: Optional[dict[str, list[str]]] = None,
+) -> None:
+    """
+    `ordem_categorias` (opcional): dict eixo/coluna -> lista com a ordem
+    desejada das categorias (ex.: {"Coluna do Board": analytics.ORDEM_COLUNAS_BOARD}),
+    repassado direto pro `category_orders` do Plotly Express - sem isso, a
+    ordem das categorias segue a ordem das linhas do dataframe recebido, o
+    que nem sempre é suficiente quando a mesma coluna aparece espalhada (ex.:
+    cruzada com Projeto) e precisa de uma ordem única e consistente em todo
+    o gráfico (barras, cor/legenda e empilhamento).
+    """
     cor_discreta = None
     if cor and cor in df.columns:
         valores_cor = set(df[cor].unique())
@@ -177,7 +194,7 @@ def _plotar(df: pd.DataFrame, tipo: str, x: str, y: str, chave: str, cor: Option
 
     if tipo == "Barras":
         fig = px.bar(df, x=x, y=y, color=cor, color_discrete_sequence=PALETA_GRAFICOS,
-                      color_discrete_map=cor_discreta, text_auto=True)
+                      color_discrete_map=cor_discreta, text_auto=True, category_orders=ordem_categorias)
         if cor is None:
             # Sem uma segunda dimensão pra agrupar/empilhar: colore cada barra por
             # posição (categoria), sem criar legenda nova - é a mesma série, só
@@ -185,25 +202,26 @@ def _plotar(df: pd.DataFrame, tipo: str, x: str, y: str, chave: str, cor: Option
             fig.update_traces(marker_color=_cores_por_posicao(len(df)))
     elif tipo == "Barras Horizontais":
         fig = px.bar(df, x=y, y=x, color=cor, orientation="h", color_discrete_sequence=PALETA_GRAFICOS,
-                      color_discrete_map=cor_discreta, text_auto=True)
+                      color_discrete_map=cor_discreta, text_auto=True, category_orders=ordem_categorias)
         if cor is None:
             fig.update_traces(marker_color=_cores_por_posicao(len(df)))
     elif tipo == "Pizza":
         fig = px.pie(df, names=x, values=y, color=cor, color_discrete_sequence=PALETA_GRAFICOS,
-                      color_discrete_map=cor_discreta)
+                      color_discrete_map=cor_discreta, category_orders=ordem_categorias)
     elif tipo == "Rosca":
         fig = px.pie(df, names=x, values=y, color=cor, color_discrete_sequence=PALETA_GRAFICOS,
-                      color_discrete_map=cor_discreta, hole=0.45)
+                      color_discrete_map=cor_discreta, hole=0.45, category_orders=ordem_categorias)
     elif tipo == "Área":
         fig = px.area(df, x=x, y=y, color=cor, color_discrete_sequence=PALETA_GRAFICOS,
-                       color_discrete_map=cor_discreta)
+                       color_discrete_map=cor_discreta, category_orders=ordem_categorias)
     elif tipo == "Treemap":
         # Com uma segunda dimensão (cor/grupo) escolhida, o Treemap vira
         # hierárquico de verdade (Categoria > Grupo) em vez de um nível só -
         # é o caso em que "gráfico além de dois eixos" faz sentido de forma
         # nativa, sem inventar um tipo de gráfico novo.
         caminho = [x, cor] if cor else [x]
-        fig = px.treemap(df, path=caminho, values=y, color=cor or x, color_discrete_sequence=PALETA_GRAFICOS)
+        fig = px.treemap(df, path=caminho, values=y, color=cor or x, color_discrete_sequence=PALETA_GRAFICOS,
+                          category_orders=ordem_categorias)
     elif tipo == "Pareto":
         fig = _construir_grafico_pareto(df, x, y)
     elif tipo == "Radar (Preenchido)":
@@ -216,7 +234,8 @@ def _plotar(df: pd.DataFrame, tipo: str, x: str, y: str, chave: str, cor: Option
         # temporais (Semana) nem pra 2 categorias só (vira só uma linha reta) -
         # por isso não é oferecido nesses gráficos.
         fig = px.line_polar(df, r=y, theta=x, color=cor, line_close=True,
-                             color_discrete_sequence=PALETA_GRAFICOS, color_discrete_map=cor_discreta)
+                             color_discrete_sequence=PALETA_GRAFICOS, color_discrete_map=cor_discreta,
+                             category_orders=ordem_categorias)
         fig.update_traces(
             fill="toself",
             opacity=0.85,
@@ -242,7 +261,7 @@ def _plotar(df: pd.DataFrame, tipo: str, x: str, y: str, chave: str, cor: Option
         )
     else:  # Linha
         fig = px.line(df, x=x, y=y, color=cor, color_discrete_sequence=PALETA_GRAFICOS,
-                       color_discrete_map=cor_discreta, markers=True)
+                       color_discrete_map=cor_discreta, markers=True, category_orders=ordem_categorias)
 
     fig.update_layout(
         margin=dict(l=10, r=10, t=30, b=10),
@@ -314,6 +333,17 @@ def render_dashboard_page() -> None:
     # ---------------------------------------------------- Status geral
     if mapeamento.status:
         st.markdown("**Distribuição de Status**" if not status_binario else "**Passou vs. Não Passou**")
+        if not status_binario:
+            st.caption(
+                f"Valores exatamente como vêm do campo **{mapeamento.status}** (Status/State) de cada "
+                "work item - **não tem nenhuma relação com a Coluna do Board** (Kanban), que é outro "
+                "campo, mapeado e mostrado separadamente mais abaixo. Se times/Area Paths diferentes "
+                "usam templates de processo diferentes no Azure DevOps, cada um pode ter seu próprio "
+                "vocabulário de Status (ex.: um time usa só New/Active/Closed, outro usa nomes próprios "
+                "como UAT/QA/Deploy) - com vários Area Paths selecionados ao mesmo tempo, é esperado ver "
+                "esses vocabulários diferentes juntos neste gráfico. Para ver qual Area Path usa qual "
+                "valor, confira o gráfico **Area Path × Status** logo abaixo."
+            )
         col_tipo, _col_espaco = st.columns([1, 3])
         with col_tipo:
             tipo_status = _selecionar_tipo_grafico("status_geral", ["Pizza", "Rosca", "Barras", "Barras Horizontais", "Treemap", "Radar (Preenchido)"])
@@ -324,6 +354,23 @@ def render_dashboard_page() -> None:
             resumo_status = analytics.distribuicao_status_bruto(df_filtrado, mapeamento)
         _plotar(resumo_status, tipo_status, x="Status", y="Quantidade", chave="status_geral")
         st.divider()
+
+    # ------------------------------------------------- Area Path × Status
+    if not status_binario:
+        df_area_x_status = analytics.distribuicao_area_path_x_status(df_filtrado, mapeamento)
+        if df_area_x_status is not None and not df_area_x_status.empty:
+            st.markdown("**Area Path × Status**")
+            st.caption(
+                "Discrimina, para cada Area Path/Projeto, quantos work items estão em cada valor de "
+                "Status - útil para confirmar que valores como UAT/QA/Deploy (quando aparecem) vêm de "
+                "um Area Path/time específico com vocabulário de Status próprio, e não de uma mistura "
+                "com a Coluna do Board."
+            )
+            col_area_status, _col_espaco_area_status = st.columns([1, 3])
+            with col_area_status:
+                tipo_area_status = _selecionar_tipo_grafico("area_path_status", ["Barras", "Barras Horizontais", "Treemap"])
+            _plotar(df_area_x_status, tipo_area_status, x="Projeto", y="Quantidade", chave="area_path_status", cor="Status")
+            st.divider()
 
     # ------------------------------------------------- Backlog aberto (idade)
     indicadores_backlog = analytics.calcular_backlog_aberto(df_filtrado, mapeamento)
@@ -445,7 +492,8 @@ def render_dashboard_page() -> None:
     padrao_colunas_externas: list[str] = []
     if mapeamento.coluna_board and mapeamento.coluna_board in df_filtrado.columns:
         colunas_board_disponiveis = sorted(
-            df_filtrado[mapeamento.coluna_board].dropna().astype(str).unique().tolist()
+            df_filtrado[mapeamento.coluna_board].dropna().astype(str).unique().tolist(),
+            key=analytics.ordem_coluna_board,
         )
         # Pré-seleção sugerida: colunas do board com nome que sugerem espera por
         # validação de fora da QA (Produto/Negócio/UX/UAT/Homologação). O
@@ -517,20 +565,30 @@ def render_dashboard_page() -> None:
     if df_coluna_board is not None and not df_coluna_board.empty:
         st.markdown("**Distribuição por Coluna do Board (Kanban)**")
         st.caption(
-            "Quantos itens estão parados em cada coluna do board (ex.: Backlog, Pronto para "
-            "Dev, Pronto para QA, Pronto para UAT, Finalizado...). Tipos de work item que não "
-            "aparecem em nenhum board no próprio Azure DevOps (ex.: Test Case, que vive em "
-            "Test Plans/Test Suites) herdam a coluna do item pai vinculado (ex.: o Bug/User "
-            "Story que aquele Test Case valida), quando existir esse vínculo. Só entram como "
-            "**Não atribuído(a)** os itens sem pai vinculado, ou cujo pai também não está em "
-            "nenhuma coluna."
+            "Coluna do board **exatamente como veio do Azure DevOps** para cada item (campo "
+            "`System.BoardColumn`), sem lista fixa nem filtro do app — se o board do time tem "
+            "19 colunas próprias (Backlog, Em Refinamento de Negócios, ..., Finalizado), essas "
+            "19 aparecem aqui. Nomes batem com a lista oficial abaixo ignorando acento e "
+            "maiúscula/minúscula (ex.: 'pronto para qa' e 'Pronto Para QA' contam juntos); "
+            "colunas com nome próprio de algum time específico aparecem do mesmo jeito, só "
+            "ficam ordenadas depois das reconhecidas. As barras seguem a ordem real do fluxo "
+            "(Backlog → Finalizado), não a quantidade — assim dá pra ver o funil/gargalo. "
+            "Tipos de work item que não aparecem em nenhum board (ex.: Test Case, que vive em "
+            "Test Plans/Test Suites) herdam a coluna do item pai vinculado, quando existir esse "
+            "vínculo. Só entram como **Não atribuído(a)** os itens sem pai vinculado, ou cujo "
+            "pai também não está em nenhuma coluna."
         )
+        with st.expander("Lista oficial de colunas usada para ordenar (não limita quais colunas aparecem)"):
+            st.write(", ".join(analytics.ORDEM_COLUNAS_BOARD))
         col_board, _col_espaco_board = st.columns([1, 3])
         with col_board:
             tipo_board = _selecionar_tipo_grafico(
                 "coluna_board", ["Barras Horizontais", "Barras", "Pizza", "Rosca", "Treemap"]
             )
-        _plotar(df_coluna_board, tipo_board, x="Coluna do Board", y="Quantidade", chave="coluna_board")
+        _plotar(
+            df_coluna_board, tipo_board, x="Coluna do Board", y="Quantidade", chave="coluna_board",
+            ordem_categorias={"Coluna do Board": analytics.ORDEM_COLUNAS_BOARD},
+        )
         st.divider()
 
     # ------------------------------------------------- Area Path × Coluna do Board
@@ -539,10 +597,10 @@ def render_dashboard_page() -> None:
         st.markdown("**Area Path × Coluna do Board**")
         st.caption(
             "Cruza Projeto/Area Path com a coluna do board — mostra quantos itens de cada "
-            "Area Path estão parados em cada coluna (Backlog, Pronto para Dev, Pronto para "
-            "QA, Pronto para UAT, Finalizado...), em vez de só o total geral por coluna. "
-            "Ajuda a enxergar onde exatamente está o gargalo: por exemplo, um Area Path "
-            "específico acumulando muito item numa coluna só."
+            "Area Path estão parados em cada coluna, na ordem real do fluxo (Backlog → "
+            "Finalizado), em vez de só o total geral por coluna. Ajuda a enxergar onde "
+            "exatamente está o gargalo: por exemplo, um Area Path específico acumulando muito "
+            "item numa coluna só."
         )
         col_area_board, _col_espaco_area_board = st.columns([1, 3])
         with col_area_board:
@@ -552,6 +610,7 @@ def render_dashboard_page() -> None:
         _plotar(
             df_area_x_board, tipo_area_board, x="Projeto", y="Quantidade",
             chave="area_path_coluna_board", cor="Coluna do Board",
+            ordem_categorias={"Coluna do Board": analytics.ORDEM_COLUNAS_BOARD},
         )
         st.divider()
 
