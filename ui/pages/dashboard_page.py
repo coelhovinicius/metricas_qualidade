@@ -512,6 +512,49 @@ def render_dashboard_page() -> None:
         _plotar(df_severidade, "Pizza", x="Severidade", y="Quantidade", chave="severidade")
         st.divider()
 
+    # ------------------------------------------------- Distribuição por Coluna do Board
+    df_coluna_board = analytics.distribuicao_coluna_board(df_filtrado, mapeamento)
+    if df_coluna_board is not None and not df_coluna_board.empty:
+        st.markdown("**Distribuição por Coluna do Board (Kanban)**")
+        st.caption(
+            "Quantos itens estão parados em cada coluna do board (ex.: Backlog, Pronto para "
+            "Dev, Pronto para QA, Pronto para UAT, Finalizado...). Tipos de work item que não "
+            "aparecem em nenhum board no próprio Azure DevOps (ex.: Test Case, que vive em "
+            "Test Plans/Test Suites) herdam a coluna do item pai vinculado (ex.: o Bug/User "
+            "Story que aquele Test Case valida), quando existir esse vínculo. Só entram como "
+            "**Não atribuído(a)** os itens sem pai vinculado, ou cujo pai também não está em "
+            "nenhuma coluna."
+        )
+        col_board, _col_espaco_board = st.columns([1, 3])
+        with col_board:
+            tipo_board = _selecionar_tipo_grafico(
+                "coluna_board", ["Barras Horizontais", "Barras", "Pizza", "Rosca", "Treemap"]
+            )
+        _plotar(df_coluna_board, tipo_board, x="Coluna do Board", y="Quantidade", chave="coluna_board")
+        st.divider()
+
+    # ------------------------------------------------- Area Path × Coluna do Board
+    df_area_x_board = analytics.distribuicao_area_path_x_coluna_board(df_filtrado, mapeamento)
+    if df_area_x_board is not None and not df_area_x_board.empty:
+        st.markdown("**Area Path × Coluna do Board**")
+        st.caption(
+            "Cruza Projeto/Area Path com a coluna do board — mostra quantos itens de cada "
+            "Area Path estão parados em cada coluna (Backlog, Pronto para Dev, Pronto para "
+            "QA, Pronto para UAT, Finalizado...), em vez de só o total geral por coluna. "
+            "Ajuda a enxergar onde exatamente está o gargalo: por exemplo, um Area Path "
+            "específico acumulando muito item numa coluna só."
+        )
+        col_area_board, _col_espaco_area_board = st.columns([1, 3])
+        with col_area_board:
+            tipo_area_board = _selecionar_tipo_grafico(
+                "area_path_coluna_board", ["Barras", "Barras Horizontais", "Treemap"]
+            )
+        _plotar(
+            df_area_x_board, tipo_area_board, x="Projeto", y="Quantidade",
+            chave="area_path_coluna_board", cor="Coluna do Board",
+        )
+        st.divider()
+
     # ------------------------------------------------- Scorecard de Qualidade (Radar Preenchido)
     st.markdown("**Scorecard de Qualidade (Radar Preenchido)**")
     st.caption(

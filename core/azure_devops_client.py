@@ -48,6 +48,11 @@ CAMPOS_API_PARA_COLUNA = {
     "System.BoardColumn": "Board Column",
 }
 
+# Campos auxiliares, buscados na API mas que não viram coluna própria no
+# arquivo final - usados só internamente (ver `_completar_board_column_via_item_pai`).
+_CAMPO_PARENT = "System.Parent"
+_CAMPO_BOARD_COLUMN = "System.BoardColumn"
+
 
 class AzureDevOpsError(Exception):
     """Erro amigável de configuração/comunicação com a API do Azure DevOps."""
@@ -98,6 +103,14 @@ def _tratar_erro_http(resposta: requests.Response) -> None:
         )
 
 
+_MARCADORES_PAGINA_DE_LOGIN = (
+    "sign in",
+    "idsrv",
+    "login.microsoftonline",
+    "login.live.com",
+)
+
+
 def _decodificar_json(resposta: requests.Response) -> dict:
     """
     Faz `resposta.json()` de forma segura, convertendo uma falha de decodificação
@@ -106,21 +119,41 @@ def _decodificar_json(resposta: requests.Response) -> dict:
     pego pelos `except AzureDevOpsError` espalhados pela interface, então
     derrubava a página inteira do Streamlit em vez de mostrar um aviso.
 
-    HTTP OK (2xx) com corpo que não é JSON válido geralmente significa que a
-    resposta não veio da API de verdade, e sim de uma camada na frente dela -
-    o caso mais comum é uma política de Conditional Access/restrição de IP no
-    Azure AD da organização, que devolve uma página HTML de login/bloqueio em
-    vez dos dados, porque o servidor de onde o app está rodando (ex.: Streamlit
-    Community Cloud) não é reconhecido como uma origem confiável - mesmo com
-    PAT válido. É por isso que costuma funcionar rodando local (rede/IP
-    confiável) e falhar em produção.
+    HTTP "OK" (2xx, às vezes especificamente 203) com corpo que não é JSON
+    válido geralmente significa que a resposta não veio da API de verdade, e
+    sim de uma camada na frente dela. Dois casos são tratados separadamente:
+
+    1) A própria tela de login do Azure DevOps/Microsoft (título "Sign In",
+       domínio de login da Microsoft, etc.) - na prática, o caso mais comum
+       de longe: o PAT está errado, expirado, foi colado com espaço/quebra de
+       linha a mais, ou o nome da Organização não existe. O Azure DevOps não
+       devolve um 401 limpo nesse caso - devolve "sucesso" (às vezes HTTP 203)
+       com essa página de login no lugar dos dados.
+    2) Qualquer outra página HTML não reconhecida - aí sim entra a hipótese
+       de uma política de Conditional Access/restrição de IP no Azure AD da
+       organização, que bloqueia o servidor onde este app está rodando
+       (diferente da rede de onde foi testado localmente).
     """
     try:
         return resposta.json()
     except ValueError as exc:
         trecho = resposta.text[:300].strip()
+        trecho_lower = trecho.lower()
+        eh_html = "<html" in trecho_lower or "<!doctype html" in trecho_lower
+
+        if eh_html and any(marcador in trecho_lower for marcador in _MARCADORES_PAGINA_DE_LOGIN):
+            raise AzureDevOpsError(
+                "O Azure DevOps não aceitou a requisição e devolveu a própria tela de login "
+                "em vez dos dados - normalmente isso quer dizer que o PAT está errado, "
+                "expirado, foi colado com algum espaço/quebra de linha a mais, ou que o nome "
+                "da Organização não existe ou está digitado diferente do que aparece em "
+                "dev.azure.com. Confira esses dois pontos: gere um novo Personal Access Token "
+                "(escopo mínimo: Work Items · Read) em dev.azure.com → foto de perfil → "
+                "Personal Access Tokens, e confira o nome exato da organização."
+            ) from exc
+
         pista = ""
-        if "<html" in trecho.lower() or "<!doctype html" in trecho.lower():
+        if eh_html:
             pista = (
                 " O Azure DevOps devolveu uma página HTML em vez de dados - isso costuma "
                 "acontecer quando a organização tem uma política de Conditional Access ou "
@@ -258,9 +291,15 @@ def _buscar_ids_da_query(organization: str, project: str, query_id: str, pat: st
     return ids
 
 
-def _buscar_campos_em_lotes(organization: str, ids: list[int], pat: str) -> list[dict]:
+def _buscar_campos_em_lotes(
+    organization: str, ids: list[int], pat: str, campos: Optional[list[str]] = None
+) -> list[dict]:
     url = f"https://dev.azure.com/{organization}/_apis/wit/workitemsbatch?api-version={API_VERSION}"
-    campos = list(CAMPOS_API_PARA_COLUNA.keys())
+    # Por padrão busca todos os campos "de coluna" + o campo auxiliar do item
+    # pai (usado por `_completar_board_column_via_item_pai`) - mas aceita uma
+    # lista de campos menor/diferente pra buscas mais enxutas (ex.: buscar só
+    # a Coluna do Board de um lote de itens pai, sem os outros ~10 campos).
+    campos = campos if campos is not None else list(CAMPOS_API_PARA_COLUNA.keys()) + [_CAMPO_PARENT]
     resultados: list[dict] = []
 
     for inicio in range(0, len(ids), TAMANHO_LOTE):
@@ -279,6 +318,63 @@ def _buscar_campos_em_lotes(organization: str, ids: list[int], pat: str) -> list
         resultados.extend(_decodificar_json(resposta).get("value", []))
 
     return resultados
+
+
+def _completar_board_column_via_item_pai(
+    organization: str, itens_api: list[dict], pat: str
+) -> list[dict]:
+    """
+    Preenche a Coluna do Board de itens que não têm board próprio no Azure
+    DevOps (o caso mais comum: Test Case, que vive dentro de Test Plans/Test
+    Suites, não no board) usando a coluna do item "pai" vinculado (ex.: o
+    Bug/User Story ao qual aquele Test Case está associado como filho) quando
+    esse vínculo existir e o pai estiver, ele sim, numa coluna do board.
+
+    Sobe só UM nível (o pai direto, via `System.Parent`) - não percorre a
+    árvore inteira. Cobre o caso real de longe mais comum (Test Case ligado
+    direto ao User Story/Bug que ele valida); itens sem pai vinculado, ou
+    cujo pai também não tem coluna de board, continuam sem coluna - não tem
+    de onde mais puxar essa informação.
+
+    Antes de fazer qualquer chamada extra à API, reaproveita a Coluna do
+    Board dos itens pai que já vieram na mesma busca (comum quando a query
+    já traz Bugs/User Stories junto dos Test Cases filhos deles) - só busca
+    na API os pais que faltam.
+    """
+    coluna_por_id_pai: dict[int, Optional[str]] = {
+        item["id"]: item.get("fields", {}).get(_CAMPO_BOARD_COLUMN)
+        for item in itens_api
+        if item.get("fields", {}).get(_CAMPO_BOARD_COLUMN)
+    }
+
+    pendentes: dict[int, list[dict]] = {}
+    for item in itens_api:
+        campos = item.get("fields", {})
+        if campos.get(_CAMPO_BOARD_COLUMN):
+            continue
+        parent_id = campos.get(_CAMPO_PARENT)
+        if parent_id:
+            pendentes.setdefault(int(parent_id), []).append(item)
+
+    if not pendentes:
+        return itens_api
+
+    ids_pais_faltando = [id_pai for id_pai in pendentes if id_pai not in coluna_por_id_pai]
+    if ids_pais_faltando:
+        itens_pais = _buscar_campos_em_lotes(
+            organization, ids_pais_faltando, pat, campos=[_CAMPO_BOARD_COLUMN]
+        )
+        for item_pai in itens_pais:
+            coluna_por_id_pai[item_pai["id"]] = item_pai.get("fields", {}).get(_CAMPO_BOARD_COLUMN)
+
+    for parent_id, itens_filhos in pendentes.items():
+        coluna_do_pai = coluna_por_id_pai.get(parent_id)
+        if not coluna_do_pai:
+            continue
+        for item in itens_filhos:
+            item["fields"][_CAMPO_BOARD_COLUMN] = coluna_do_pai
+
+    return itens_api
 
 
 def _formatar_pessoa(valor: Optional[dict]) -> Optional[str]:
@@ -353,4 +449,5 @@ def buscar_work_items_da_query(
         return pd.DataFrame(columns=list(CAMPOS_API_PARA_COLUNA.values()))
 
     itens_api = _buscar_campos_em_lotes(organization, ids, pat)
+    itens_api = _completar_board_column_via_item_pai(organization, itens_api, pat)
     return _montar_dataframe(itens_api)

@@ -342,6 +342,67 @@ def distribuicao_severidade(df: pd.DataFrame, mapeamento: MapeamentoColunas) -> 
     return resultado
 
 
+def distribuicao_coluna_board(df: pd.DataFrame, mapeamento: MapeamentoColunas) -> Optional[pd.DataFrame]:
+    """
+    Distribuição de registros pela Coluna do Board (Kanban) - ex.: Backlog,
+    Pronto para Dev, Pronto para QA, Pronto para UAT, Finalizado...
+
+    Nem todo tipo de work item do Azure DevOps aparece num board Kanban - por
+    exemplo, Test Case vive dentro de Test Plans/Test Suites, não no board,
+    então nunca tem uma coluna própria (isso é assim na origem dos dados, não
+    uma limitação deste app). Quando a busca é feita pela integração
+    automática com o Azure DevOps, esses itens já chegam aqui com a coluna do
+    item "pai" vinculado herdada (ver `core/azure_devops_client.py`,
+    `_completar_board_column_via_item_pai`), quando esse vínculo existir. Só
+    os que continuam sem nenhuma coluna (nem própria, nem herdada) ficam
+    rotulados como "Não atribuído(a)" (ver `preparar_dados`/`_CAMPOS_ROTULAVEIS`)
+    e aparecem na distribuição como uma categoria própria, em vez de sumir
+    silenciosamente - assim fica claro que parte dos itens não tem coluna de
+    board associada, em vez de parecer que a contagem está errada.
+    """
+    if not mapeamento.coluna_board or mapeamento.coluna_board not in df.columns:
+        return None
+    resultado = (
+        df.groupby(mapeamento.coluna_board, dropna=False)
+        .size()
+        .reset_index(name="Quantidade")
+        .rename(columns={mapeamento.coluna_board: "Coluna do Board"})
+        .sort_values("Quantidade", ascending=False)
+    )
+    return resultado
+
+
+def distribuicao_area_path_x_coluna_board(
+    df: pd.DataFrame, mapeamento: MapeamentoColunas
+) -> Optional[pd.DataFrame]:
+    """
+    Cruza Projeto/Area Path com Coluna do Board (Kanban): quantos work items
+    de cada Area Path estão parados em cada coluna - de Backlog a Finalizado.
+
+    Diferente de `distribuicao_coluna_board` (que só soma o total por coluna,
+    sem discriminar de onde vêm), esta função devolve uma linha por
+    combinação (Projeto, Coluna do Board) - é o que permite montar um
+    gráfico de barras empilhadas/agrupadas (ou treemap hierárquico) que
+    mostra, por exemplo, "BACKOFFICE tem 12 itens parados em Pronto para QA,
+    e só 2 em Backlog", em vez de só o total geral de "Pronto para QA".
+
+    Depende dos dois campos estarem mapeados (Projeto e Coluna do Board) -
+    sem um dos dois, não tem como cruzar, e a função devolve `None`.
+    """
+    if not mapeamento.projeto or mapeamento.projeto not in df.columns:
+        return None
+    if not mapeamento.coluna_board or mapeamento.coluna_board not in df.columns:
+        return None
+    resultado = (
+        df.groupby([mapeamento.projeto, mapeamento.coluna_board], dropna=False)
+        .size()
+        .reset_index(name="Quantidade")
+        .rename(columns={mapeamento.projeto: "Projeto", mapeamento.coluna_board: "Coluna do Board"})
+        .sort_values(["Projeto", "Quantidade"], ascending=[True, False])
+    )
+    return resultado
+
+
 def filtrar_por_intervalo_datas(
     df: pd.DataFrame, coluna_data: Optional[str], data_inicio, data_fim
 ) -> pd.DataFrame:
