@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import streamlit as st
 
+from core.analytics import ORDEM_COLUNAS_BOARD
+
 PRIMARY_COLOR = "#F15A24"
 BACKGROUND_COLOR = "#FAF6F0"
 SECONDARY_BACKGROUND_COLOR = "#FFFFFF"
@@ -53,6 +55,72 @@ PALETA_BUGS_TEMPO = {
     "Aguardando Validação Externa": "#E0A93E",
     "Finalizado": "#2E7D5B",
 }
+
+# Extensão de PALETA_GRAFICOS com mais tons no mesmo estilo (cores vibrantes
+# de marca, mesma família visual) - usada só onde um gráfico precisa de mais
+# de 8 cores fixas por valor (hoje, só a Coluna do Board chega nisso: até 19
+# colunas oficiais em `core.analytics.ORDEM_COLUNAS_BOARD`, mais eventuais
+# colunas com nome próprio de algum time).
+#
+# Pediu-se que TODOS os gráficos usassem o mesmo esquema de cores do
+# "Distribuição de Status" - que não tem paleta própria, só usa
+# PALETA_GRAFICOS puro. Por isso os 8 primeiros tons daqui são EXATAMENTE os
+# de PALETA_GRAFICOS, na mesma ordem: com até 8 categorias, um gráfico
+# usando esta lista fica com as cores idênticas a qualquer gráfico "normal"
+# do painel. Os 16 tons extras (a partir da 9ª posição) só entram em jogo
+# quando realmente há mais de 8 categorias - existem pra continuar
+# resolvendo o problema original (cores repetindo a cada 8 colunas), sem
+# reintroduzir uma paleta visualmente "estranha"/fora do padrão do resto do
+# app (a tentativa anterior, baseada nas cores de Kenneth Kelly, tinha tons
+# terrosos/escuros que destoavam do visual vibrante do restante do painel).
+PALETA_GRAFICOS_ESTENDIDA = PALETA_GRAFICOS + [
+    "#00A99D",  # turquesa
+    "#8E44AD",  # roxo
+    "#B8860B",  # ouro escuro/mostarda
+    "#34667F",  # azul petróleo
+    "#C2185B",  # framboesa
+    "#7CB342",  # verde lima
+    "#5D4037",  # marrom
+    "#827717",  # oliva escuro
+    "#EC407A",  # rosa chiclete
+    "#5C6BC0",  # azul-violeta médio
+    "#BF5B04",  # terracota forte
+    "#1B5E20",  # verde floresta escuro
+    "#00B8D4",  # azul ciano vivo
+    "#880E4F",  # vinho/bordô
+    "#AFB42B",  # oliva claro
+    "#37474F",  # cinza-azulado neutro forte
+]
+
+ROTULO_NAO_ATRIBUIDO_BOARD = "Não atribuído(a)"
+
+PALETA_COLUNA_BOARD: dict[str, str] = {
+    nome: PALETA_GRAFICOS_ESTENDIDA[indice % len(PALETA_GRAFICOS_ESTENDIDA)]
+    for indice, nome in enumerate(ORDEM_COLUNAS_BOARD)
+}
+PALETA_COLUNA_BOARD[ROTULO_NAO_ATRIBUIDO_BOARD] = "#8C8C8C"
+
+
+def cor_discreta_coluna_board(valores_presentes) -> dict[str, str]:
+    """
+    Monta o `color_discrete_map` da Coluna do Board a partir da paleta fixa
+    acima (`PALETA_COLUNA_BOARD`, que começa com as mesmas cores de
+    PALETA_GRAFICOS), e completa - sem repetir nenhuma cor já usada -
+    qualquer valor que apareça nos dados mas não esteja na lista oficial
+    (coluna com nome próprio de algum time). Recebe os valores realmente
+    presentes no gráfico (não a lista oficial inteira) pra não gerar mapa
+    maior do que o necessário.
+    """
+    mapa = dict(PALETA_COLUNA_BOARD)
+    cores_livres = [cor for cor in PALETA_GRAFICOS_ESTENDIDA if cor not in mapa.values()]
+    indice_extra = 0
+    for valor in sorted(str(valor) for valor in valores_presentes if str(valor) not in mapa):
+        if indice_extra < len(cores_livres):
+            mapa[valor] = cores_livres[indice_extra]
+        else:
+            mapa[valor] = PALETA_GRAFICOS_ESTENDIDA[indice_extra % len(PALETA_GRAFICOS_ESTENDIDA)]
+        indice_extra += 1
+    return mapa
 
 
 def injetar_css_global() -> None:

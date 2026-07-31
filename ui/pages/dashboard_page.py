@@ -13,7 +13,7 @@ import streamlit as st
 from core import analytics
 from core.column_mapper import MapeamentoColunas
 from ui.components import action_button, finish_action, loading_overlay, render_header, render_kpi_row
-from ui.theme import PALETA_BUGS_TEMPO, PALETA_GRAFICOS, PALETA_STATUS
+from ui.theme import PALETA_BUGS_TEMPO, PALETA_GRAFICOS, PALETA_STATUS, cor_discreta_coluna_board
 
 TIPOS_GRAFICO_PADRAO = ["Barras", "Barras Horizontais", "Pizza", "Rosca", "Linha", "Área", "Treemap", "Pareto", "Radar (Preenchido)"]
 
@@ -191,6 +191,27 @@ def _plotar(
             cor_discreta = PALETA_STATUS
         elif cor == "Categoria" and valores_cor <= set(PALETA_BUGS_TEMPO):
             cor_discreta = PALETA_BUGS_TEMPO
+        elif cor == "Coluna do Board":
+            # Paleta dedicada (conjunto de máximo contraste, ver `ui/theme.py`)
+            # em vez da paleta padrão de 8 cores - com até 19 colunas oficiais +
+            # eventuais colunas com nome próprio, 8 cores ciclando faziam a 9ª
+            # coluna repetir a cor da 1ª.
+            cor_discreta = cor_discreta_coluna_board(valores_cor)
+
+    # Sem uma segunda dimensão de cor (`cor`), mas o eixo de categoria É a
+    # Coluna do Board (caso da "Distribuição por Coluna do Board", uma
+    # dimensão só): usa a mesma paleta dedicada acima, por valor, em vez de
+    # `_cores_por_posicao`/do ciclo padrão de 8 cores.
+    cor_coluna_board_sem_dimensao = (
+        cor is None and x == "Coluna do Board" and x in df.columns
+    )
+    if cor_coluna_board_sem_dimensao:
+        cor_discreta = cor_discreta_coluna_board(set(df[x]))
+
+    def _cores_para_barras(eixo_categoria: str) -> list[str]:
+        if cor_coluna_board_sem_dimensao:
+            return [cor_discreta[str(valor)] for valor in df[eixo_categoria]]
+        return _cores_por_posicao(len(df))
 
     if tipo == "Barras":
         fig = px.bar(df, x=x, y=y, color=cor, color_discrete_sequence=PALETA_GRAFICOS,
@@ -199,17 +220,23 @@ def _plotar(
             # Sem uma segunda dimensão pra agrupar/empilhar: colore cada barra por
             # posição (categoria), sem criar legenda nova - é a mesma série, só
             # com uma cor por categoria em vez de uma cor única pra todo o gráfico.
-            fig.update_traces(marker_color=_cores_por_posicao(len(df)))
+            fig.update_traces(marker_color=_cores_para_barras(x))
     elif tipo == "Barras Horizontais":
         fig = px.bar(df, x=y, y=x, color=cor, orientation="h", color_discrete_sequence=PALETA_GRAFICOS,
                       color_discrete_map=cor_discreta, text_auto=True, category_orders=ordem_categorias)
         if cor is None:
-            fig.update_traces(marker_color=_cores_por_posicao(len(df)))
+            fig.update_traces(marker_color=_cores_para_barras(x))
     elif tipo == "Pizza":
-        fig = px.pie(df, names=x, values=y, color=cor, color_discrete_sequence=PALETA_GRAFICOS,
+        # px.pie só aplica `color_discrete_map` quando `color` é passado de
+        # verdade (com `color=None`, ignora o mapa e cicla a paleta padrão por
+        # posição) - por isso, quando não há uma segunda dimensão mas o eixo É
+        # a Coluna do Board, usa a própria coluna de nomes (`x`) como `color`.
+        cor_pizza = cor or (x if cor_coluna_board_sem_dimensao else None)
+        fig = px.pie(df, names=x, values=y, color=cor_pizza, color_discrete_sequence=PALETA_GRAFICOS,
                       color_discrete_map=cor_discreta, category_orders=ordem_categorias)
     elif tipo == "Rosca":
-        fig = px.pie(df, names=x, values=y, color=cor, color_discrete_sequence=PALETA_GRAFICOS,
+        cor_pizza = cor or (x if cor_coluna_board_sem_dimensao else None)
+        fig = px.pie(df, names=x, values=y, color=cor_pizza, color_discrete_sequence=PALETA_GRAFICOS,
                       color_discrete_map=cor_discreta, hole=0.45, category_orders=ordem_categorias)
     elif tipo == "Área":
         fig = px.area(df, x=x, y=y, color=cor, color_discrete_sequence=PALETA_GRAFICOS,
@@ -219,9 +246,20 @@ def _plotar(
         # hierárquico de verdade (Categoria > Grupo) em vez de um nível só -
         # é o caso em que "gráfico além de dois eixos" faz sentido de forma
         # nativa, sem inventar um tipo de gráfico novo.
+        #
+        # `px.treemap` não aceita `category_orders` (só `px.bar`/`px.pie`/
+        # `px.area`/`px.line` aceitam) - passar esse argumento aqui derruba a
+        # página com "TypeError: treemap() got an unexpected keyword argument
+        # 'category_orders'". Não faz falta pro Treemap mesmo: a posição dos
+        # retângulos é decidida pelo algoritmo de preenchimento por área
+        # (tamanho = valor), não por uma ordem de categorias como num eixo de
+        # barras - não existe "ordem" pra impor aqui.
         caminho = [x, cor] if cor else [x]
+        cor_discreta_treemap = cor_discreta
+        if cor_discreta_treemap is None and (cor or x) == "Coluna do Board":
+            cor_discreta_treemap = cor_discreta_coluna_board(set(df[cor or x]))
         fig = px.treemap(df, path=caminho, values=y, color=cor or x, color_discrete_sequence=PALETA_GRAFICOS,
-                          category_orders=ordem_categorias)
+                          color_discrete_map=cor_discreta_treemap)
     elif tipo == "Pareto":
         fig = _construir_grafico_pareto(df, x, y)
     elif tipo == "Radar (Preenchido)":
@@ -466,7 +504,7 @@ def render_dashboard_page() -> None:
         if df_tipo_teste is not None and not df_tipo_teste.empty:
             col_tipo, _col_espaco = st.columns([1, 3])
             with col_tipo:
-                tipo_tt = _selecionar_tipo_grafico("tipo_teste", ["Barras", "Pizza", "Rosca", "Treemap", "Barras Horizontais", "Pareto", "Radar (Preenchido)"])
+                tipo_tt = _selecionar_tipo_grafico("tipo_teste", ["Treemap", "Barras", "Pizza", "Rosca", "Barras Horizontais", "Pareto", "Radar (Preenchido)"])
             _plotar(df_tipo_teste, tipo_tt, x="Tipo de Teste", y="Quantidade", chave="tipo_teste")
         else:
             st.info("Nenhum tipo restante depois da exclusão acima — ajuste a lista para ver o gráfico.")
@@ -495,15 +533,18 @@ def render_dashboard_page() -> None:
             df_filtrado[mapeamento.coluna_board].dropna().astype(str).unique().tolist(),
             key=analytics.ordem_coluna_board,
         )
-        # Pré-seleção sugerida: colunas do board com nome que sugerem espera por
-        # validação de fora da QA (Produto/Negócio/UX/UAT/Homologação). O
-        # usuário pode ajustar livremente no multiselect abaixo - é só um
-        # ponto de partida pra não começar do zero.
-        _PALAVRAS_SUGESTAO_EXTERNA = ("uat", "homolog", "aceit", "produto", "negocio", "negócio", "ux")
+        # Pré-seleção: TUDO que não for, exatamente, "Pronto para QA" e/ou
+        # "Teste QA" - únicas colunas que representam trabalho realmente sob
+        # responsabilidade da QA; qualquer outra (Backlog, Dev, Code Review,
+        # UAT, CAB, Produção, "Não atribuído(a)", coluna com nome próprio de
+        # algum time, etc.) conta como fora do controle da QA por padrão. O
+        # usuário pode ajustar livremente no multiselect abaixo. Os valores
+        # em `colunas_board_disponiveis` já vêm canonizados (ver
+        # `canonizar_coluna_board`/`preparar_dados`), então a comparação é
+        # direta com a grafia oficial - sem precisar normalizar de novo aqui.
+        _COLUNAS_RESPONSABILIDADE_QA = {"Pronto para QA", "Teste QA"}
         padrao_colunas_externas = [
-            valor
-            for valor in colunas_board_disponiveis
-            if any(palavra in valor.lower() for palavra in _PALAVRAS_SUGESTAO_EXTERNA)
+            valor for valor in colunas_board_disponiveis if valor not in _COLUNAS_RESPONSABILIDADE_QA
         ]
 
     colunas_externas_selecionadas = st.session_state.get(
@@ -526,10 +567,12 @@ def render_dashboard_page() -> None:
                 default=padrao_colunas_externas,
                 key="bugs_tempo_colunas_externas",
                 help=(
-                    "Itens que a QA já resolveu, mas que estão parados numa dessas colunas "
-                    "do board (ex.: 'Pronto para UAT', aguardando o time de Produto/Negócio/UX "
-                    "validar) entram na categoria 'Aguardando Validação Externa' em vez de "
-                    "contar como trabalho ainda em andamento da QA."
+                    "Por padrão vem marcado tudo que não for exatamente 'Pronto para QA' e/ou "
+                    "'Teste QA' - as únicas colunas que representam trabalho sob "
+                    "responsabilidade da QA. Itens que a QA já resolveu, mas que estão parados "
+                    "numa dessas colunas marcadas (ex.: 'Pronto para UAT', aguardando o time de "
+                    "Produto/Negócio/UX validar) entram na categoria 'Aguardando Validação "
+                    "Externa' em vez de contar como trabalho ainda em andamento da QA."
                 ),
             )
         col_tipo, _col_espaco = st.columns([1, 3])
@@ -561,8 +604,8 @@ def render_dashboard_page() -> None:
         st.divider()
 
     # ------------------------------------------------- Distribuição por Coluna do Board
-    df_coluna_board = analytics.distribuicao_coluna_board(df_filtrado, mapeamento)
-    if df_coluna_board is not None and not df_coluna_board.empty:
+    df_coluna_board_completo = analytics.distribuicao_coluna_board(df_filtrado, mapeamento)
+    if df_coluna_board_completo is not None and not df_coluna_board_completo.empty:
         st.markdown("**Distribuição por Coluna do Board (Kanban)**")
         st.caption(
             "Coluna do board **exatamente como veio do Azure DevOps** para cada item (campo "
@@ -576,43 +619,92 @@ def render_dashboard_page() -> None:
             "Tipos de work item que não aparecem em nenhum board (ex.: Test Case, que vive em "
             "Test Plans/Test Suites) herdam a coluna do item pai vinculado, quando existir esse "
             "vínculo. Só entram como **Não atribuído(a)** os itens sem pai vinculado, ou cujo "
-            "pai também não está em nenhuma coluna."
+            "pai também não está em nenhuma coluna — e, por padrão, esses itens **não aparecem "
+            "neste gráfico nem no cruzamento Area Path × Coluna do Board logo abaixo** (veja "
+            "como reincluí-los, por tipo, no expansor abaixo)."
         )
         with st.expander("Lista oficial de colunas usada para ordenar (não limita quais colunas aparecem)"):
             st.write(", ".join(analytics.ORDEM_COLUNAS_BOARD))
+
+        df_detalhe_nao_atribuido = analytics.detalhamento_nao_atribuido_coluna_board(df_filtrado, mapeamento)
+        tipos_reincluidos: list[str] = []
+        if df_detalhe_nao_atribuido is not None and not df_detalhe_nao_atribuido.empty:
+            with st.expander(
+                f"Por que {int(df_detalhe_nao_atribuido['Quantidade'].sum()):,}".replace(",", ".")
+                + ' item(ns) está(ão) como "Não atribuído(a)"? (ver por tipo, e reincluir se quiser)'
+            ):
+                st.caption(
+                    "Quebra dos itens **Não atribuído(a)** por Tipo de Work Item. Ajuda a "
+                    "diferenciar as duas causas possíveis: **(a)** o tipo simplesmente nunca "
+                    "aparece em nenhum board no Azure DevOps (ex.: Test Case, que vive em Test "
+                    "Plans/Test Suites) e não tem um item pai vinculado pra herdar a coluna dele "
+                    "— nesse caso é o esperado, não é bug; **(b)** o tipo normalmente aparece no "
+                    "board (ex.: Bug, User Story, Task) mas mesmo assim veio sem coluna direto da "
+                    "API do Azure DevOps — o que costuma acontecer quando o Area Path do item não "
+                    "está associado a nenhum Time, ou o Time responsável não tem uma coluna "
+                    "mapeada pro State atual do item nas configurações do board dele (isso é "
+                    "configuração do lado do Azure DevOps, não algo que o app calcula)."
+                )
+                st.dataframe(df_detalhe_nao_atribuido, use_container_width=True, hide_index=True)
+                tipos_reincluidos = st.multiselect(
+                    'Reincluir itens "Não atribuído(a)" destes tipos nos dois gráficos abaixo',
+                    options=df_detalhe_nao_atribuido["Tipo"].tolist(),
+                    default=[],
+                    key="coluna_board_tipos_nao_atribuido_reincluidos",
+                    help=(
+                        "Por padrão, todo item sem Coluna do Board (de nenhum tipo) fica de fora "
+                        "da Distribuição por Coluna do Board e do cruzamento Area Path × Coluna "
+                        "do Board. Marque um tipo aqui pra voltar a incluir esses itens (como "
+                        '"Não atribuído(a)") nos dois gráficos — dá pra reincluir um tipo de '
+                        "cada vez, sem precisar reincluir todos juntos, e desmarcar de novo a "
+                        "qualquer momento."
+                    ),
+                )
+
+        df_para_graficos_coluna_board = analytics.excluir_nao_atribuido_coluna_board_por_tipo(
+            df_filtrado, mapeamento, set(tipos_reincluidos)
+        )
+        df_coluna_board = analytics.distribuicao_coluna_board(df_para_graficos_coluna_board, mapeamento)
+
         col_board, _col_espaco_board = st.columns([1, 3])
         with col_board:
             tipo_board = _selecionar_tipo_grafico(
-                "coluna_board", ["Barras Horizontais", "Barras", "Pizza", "Rosca", "Treemap"]
+                "coluna_board", ["Barras", "Barras Horizontais", "Pizza", "Rosca", "Treemap"]
             )
-        _plotar(
-            df_coluna_board, tipo_board, x="Coluna do Board", y="Quantidade", chave="coluna_board",
-            ordem_categorias={"Coluna do Board": analytics.ORDEM_COLUNAS_BOARD},
-        )
+        if df_coluna_board is not None and not df_coluna_board.empty:
+            _plotar(
+                df_coluna_board, tipo_board, x="Coluna do Board", y="Quantidade", chave="coluna_board",
+                ordem_categorias={"Coluna do Board": analytics.ORDEM_COLUNAS_BOARD},
+            )
+        else:
+            st.info('Nenhum item com Coluna do Board (fora de "Não atribuído(a)") para os filtros atuais.')
         st.divider()
 
-    # ------------------------------------------------- Area Path × Coluna do Board
-    df_area_x_board = analytics.distribuicao_area_path_x_coluna_board(df_filtrado, mapeamento)
-    if df_area_x_board is not None and not df_area_x_board.empty:
-        st.markdown("**Area Path × Coluna do Board**")
-        st.caption(
-            "Cruza Projeto/Area Path com a coluna do board — mostra quantos itens de cada "
-            "Area Path estão parados em cada coluna, na ordem real do fluxo (Backlog → "
-            "Finalizado), em vez de só o total geral por coluna. Ajuda a enxergar onde "
-            "exatamente está o gargalo: por exemplo, um Area Path específico acumulando muito "
-            "item numa coluna só."
+        # --------------------------------------------- Area Path × Coluna do Board
+        df_area_x_board = analytics.distribuicao_area_path_x_coluna_board(
+            df_para_graficos_coluna_board, mapeamento
         )
-        col_area_board, _col_espaco_area_board = st.columns([1, 3])
-        with col_area_board:
-            tipo_area_board = _selecionar_tipo_grafico(
-                "area_path_coluna_board", ["Barras", "Barras Horizontais", "Treemap"]
+        if df_area_x_board is not None and not df_area_x_board.empty:
+            st.markdown("**Area Path × Coluna do Board**")
+            st.caption(
+                "Cruza Projeto/Area Path com a coluna do board — mostra quantos itens de cada "
+                "Area Path estão parados em cada coluna, na ordem real do fluxo (Backlog → "
+                "Finalizado), em vez de só o total geral por coluna. Ajuda a enxergar onde "
+                "exatamente está o gargalo: por exemplo, um Area Path específico acumulando "
+                'muito item numa coluna só. Segue a mesma inclusão/exclusão de "Não '
+                'atribuído(a)" por tipo escolhida acima.'
             )
-        _plotar(
-            df_area_x_board, tipo_area_board, x="Projeto", y="Quantidade",
-            chave="area_path_coluna_board", cor="Coluna do Board",
-            ordem_categorias={"Coluna do Board": analytics.ORDEM_COLUNAS_BOARD},
-        )
-        st.divider()
+            col_area_board, _col_espaco_area_board = st.columns([1, 3])
+            with col_area_board:
+                tipo_area_board = _selecionar_tipo_grafico(
+                    "area_path_coluna_board", ["Barras", "Barras Horizontais", "Treemap"]
+                )
+            _plotar(
+                df_area_x_board, tipo_area_board, x="Projeto", y="Quantidade",
+                chave="area_path_coluna_board", cor="Coluna do Board",
+                ordem_categorias={"Coluna do Board": analytics.ORDEM_COLUNAS_BOARD},
+            )
+            st.divider()
 
     # ------------------------------------------------- Scorecard de Qualidade (Radar Preenchido)
     st.markdown("**Scorecard de Qualidade (Radar Preenchido)**")

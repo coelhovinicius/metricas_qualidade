@@ -467,6 +467,84 @@ def distribuicao_coluna_board(df: pd.DataFrame, mapeamento: MapeamentoColunas) -
     return resultado
 
 
+def detalhamento_nao_atribuido_coluna_board(
+    df: pd.DataFrame, mapeamento: MapeamentoColunas
+) -> Optional[pd.DataFrame]:
+    """
+    Quebra os itens rotulados como "Não atribuído(a)" em `distribuicao_coluna_board`
+    por Tipo de Teste/Work Item Type, para ajudar a diagnosticar POR QUE tantos
+    itens caíram nessa categoria - existem 3 motivos possíveis, e só olhando os
+    dados reais dá pra saber qual é:
+
+        1) O tipo de work item nunca aparece em nenhum board Kanban no próprio
+           Azure DevOps (ex.: Test Case, que vive em Test Plans/Test Suites) E
+           não tem um item "pai" vinculado (Parent) para herdar a coluna dele -
+           nesse caso "Não atribuído(a)" é o resultado correto/esperado, não é
+           um bug.
+        2) O item tem um pai vinculado, mas esse pai também não está em
+           nenhuma coluna (ex.: pai é um Epic/Feature que também não está no
+           board, ou o próprio pai também é um tipo fora do board).
+        3) O item É de um tipo que normalmente aparece no board (ex.: Bug,
+           User Story) mas mesmo assim veio sem Coluna do Board da própria
+           API do Azure DevOps - isso acontece quando o Area Path do item não
+           está associado a nenhum Time (Team), ou quando o Time responsável
+           não tem uma coluna mapeada para o State atual do item nas
+           configurações do board dele. É uma característica dos dados/da
+           configuração do board no Azure DevOps, não algo que este app
+           calcula ou poderia inferir sozinho.
+
+    Se a maioria dos itens "Não atribuído(a)" for de um tipo que claramente
+    não vive em board (Test Case, Shared Steps, etc.), é o motivo 1/2 - normal.
+    Se aparecerem tipos como Bug/User Story/Task em quantidade relevante, vale
+    conferir a configuração do board daquele Time no Azure DevOps (motivo 3).
+    """
+    if not mapeamento.coluna_board or mapeamento.coluna_board not in df.columns:
+        return None
+    nao_atribuidos = df[df[mapeamento.coluna_board] == ROTULO_VAZIO_PADRAO]
+    if nao_atribuidos.empty:
+        return None
+    if not mapeamento.tipo_teste or mapeamento.tipo_teste not in df.columns:
+        return None
+    resultado = (
+        nao_atribuidos.groupby(mapeamento.tipo_teste, dropna=False)
+        .size()
+        .reset_index(name="Quantidade")
+        .rename(columns={mapeamento.tipo_teste: "Tipo"})
+        .sort_values("Quantidade", ascending=False)
+        .reset_index(drop=True)
+    )
+    return resultado
+
+
+def excluir_nao_atribuido_coluna_board_por_tipo(
+    df: pd.DataFrame, mapeamento: MapeamentoColunas, tipos_incluidos: set
+) -> pd.DataFrame:
+    """
+    Devolve uma cópia de `df` sem as linhas "Não atribuído(a)" de Coluna do
+    Board cujo Tipo de Teste/Work Item Type NÃO esteja em `tipos_incluidos` -
+    usado pra deixar o usuário reincluir, tipo a tipo, itens sem coluna de
+    board nos gráficos de Coluna do Board (por padrão todos ficam de fora,
+    já que a intenção é enxergar o fluxo real do board sem o "ruído" de
+    itens que nunca estiveram nele - ver
+    `detalhamento_nao_atribuido_coluna_board`, que gera a lista de tipos
+    disponível pra essa reinclusão).
+
+    Nunca afeta: linhas com uma Coluna do Board de verdade (só mexe nas
+    rotuladas "Não atribuído(a)"); nem o restante do dashboard - é usado só
+    na hora de montar os gráficos de Coluna do Board, o resto dos
+    indicadores continua vendo todos os itens normalmente. Se Coluna do
+    Board ou Tipo de Teste não estiverem mapeados, devolve `df` sem
+    alteração (não tem como filtrar sem esses dois campos).
+    """
+    if not mapeamento.coluna_board or mapeamento.coluna_board not in df.columns:
+        return df
+    if not mapeamento.tipo_teste or mapeamento.tipo_teste not in df.columns:
+        return df
+    eh_nao_atribuido = df[mapeamento.coluna_board] == ROTULO_VAZIO_PADRAO
+    tipo_nao_incluido = ~df[mapeamento.tipo_teste].isin(tipos_incluidos)
+    return df[~(eh_nao_atribuido & tipo_nao_incluido)]
+
+
 def distribuicao_area_path_x_coluna_board(
     df: pd.DataFrame, mapeamento: MapeamentoColunas
 ) -> Optional[pd.DataFrame]:
