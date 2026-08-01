@@ -48,7 +48,7 @@ def render_login_page(auth_manager: AuthManager) -> None:
                 st.info("Informe suas credenciais para acessar o painel.")
 
             st.caption(
-                "Caso não tenha uma conta, solicite acesso."
+                "Caso não tenha uma conta, entre em contato com o administrador do sistema."
             )
             _renderizar_botao_solicitacao_conta()
 
@@ -84,8 +84,8 @@ def _renderizar_botao_solicitacao_conta() -> None:
 @st.dialog("Solicitar criação de conta")
 def _dialogo_solicitar_acesso() -> None:
     st.caption(
-        "Preencha os dados abaixo. Sua solicitação será registrada e enviada "
-        "para análise do administrador do sistema."
+        "Preencha os dados abaixo. Sua solicitação fica registrada só no painel "
+        "administrativo — hoje, o administrador é a única pessoa com acesso a ela."
     )
     nome = st.text_input("Nome completo", key="solicitacao_nome")
     email = st.text_input("E-mail", key="solicitacao_email")

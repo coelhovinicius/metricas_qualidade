@@ -106,7 +106,7 @@ Descrito acima, em [Login e controle de acesso](#login-e-controle-de-acesso).
 app.py                       # ponto de entrada / roteamento de páginas
 auth/
   auth_manager.py            # autenticação (login, sessão, logout)
-  users.yaml                 # credenciais dos usuários (não versionar em texto puro sem cuidado)
+  users.yaml                 # fallback local de credenciais - NÃO commitado (ver .gitignore)
 core/
   analytics.py               # regras de negócio: cálculo de todos os indicadores/gráficos
   azure_devops_client.py     # cliente da API REST do Azure DevOps
@@ -126,7 +126,9 @@ utils/
   session.py                 # inicialização/limpeza centralizada do session_state
 assets/                      # logotipos e imagens (logo_refuturiza.png, simbolo_refuturiza.png)
 scripts/
-  gerar_hash_senha.py        # utilitário de linha de comando para gerar hash de senha (bcrypt)
+  gerar_hash_senha.py                   # gera o hash bcrypt de uma senha nova
+  migrar_credenciais_para_secrets.py    # converte auth/users.yaml existente no bloco TOML dos Secrets
+.gitignore                   # exclui auth/users.yaml e .streamlit/secrets.toml do controle de versão
 requirements.txt
 ```
 
@@ -164,45 +166,70 @@ A aplicação abre em `http://localhost:8501`. Sem os Secrets configurados (pass
 
 ## Configuração (secrets)
 
-Em produção (Streamlit Community Cloud), configurar em **Settings → Secrets**; localmente, em `.streamlit/secrets.toml` (nunca commitado no Git):
+Em produção (Streamlit Community Cloud), configurar em **Settings → Secrets**; localmente, em `.streamlit/secrets.toml` (nunca commitado no Git — ver `.gitignore`):
 
 ```toml
-[auth]
-cookie_key = "uma-chave-secreta-longa-e-aleatoria"
+[auth.cookie]
+name = "refu_cookie"
+key = "uma-chave-secreta-longa-e-aleatoria"
+expiry_days = 30
+
+[auth.preauthorized]
+emails = []
+
+[auth.credentials.usernames.admin]
+email = "admin@empresa.com"
+name = "Nome Completo"
+password = "$2b$12$hash-bcrypt-da-senha-aqui"
+
+# repita [auth.credentials.usernames.<usuario>] para cada conta
 
 [turso]
 database_url = "https://SEU-BANCO-SEUUSUARIO.turso.io"
 auth_token = "SEU_TOKEN_DE_AUTENTICACAO_TURSO"
 ```
 
-- `auth.cookie_key` assina o cookie de sessão de login — é o segredo mais sensível do app; sem ele configurado em produção, o app usa o valor de `auth/users.yaml` como fallback (aceitável só em desenvolvimento local).
+- **`[auth]`** contém a base de usuários inteira (credenciais + config do cookie + e-mails pré-autorizados) — é a fonte de credenciais preferida (ver [Gestão de usuários](#gestão-de-usuários)). O `auth/users.yaml` local continua existindo como fallback só para rodar sem configurar Secrets (ex.: primeira vez clonando o projeto) — nesse caso funciona exatamente como antes, só que **sem essa fonte nunca ser commitada**. Se quiser manter só a `cookie_key` nos Secrets (formato antigo/mínimo) e o resto no arquivo local, isso também continua funcionando — `auth/auth_manager.py` aceita as duas formas.
 - `turso.*` é exigido apenas para o fluxo de solicitação de acesso (botão "Solicitar acesso" na tela de login e o Painel Administrativo). Sem essa configuração, o restante do app funciona normalmente — só esse fluxo específico fica indisponível, com uma mensagem de erro clara em vez de travar a aplicação.
 - O Personal Access Token do Azure DevOps **não é** um secret da aplicação — cada usuário cola o próprio PAT dentro do app, na tela de importação, e ele nunca é persistido.
 
+Para converter um `auth/users.yaml` já existente no bloco `[auth.*]` acima sem digitar hash de senha manualmente, rode localmente:
+
+```powershell
+python scripts\migrar_credenciais_para_secrets.py
+```
+
+O script só lê o arquivo local e imprime o bloco TOML no terminal — nada é enviado pela rede; copie a saída e cole no `secrets.toml`.
+
 ## Gestão de usuários
 
-A criação de contas é manual, por decisão de projeto (sem processo automatizado de cadastro):
+**As credenciais de usuário (incluindo hash de senha) vivem nos Secrets do Streamlit, nunca no repositório Git.** `auth/users.yaml` é só um fallback de desenvolvimento local e **não deve ser commitado** (está no `.gitignore`) — ver [Configuração (secrets)](#configuração-secrets) para o porquê e como migrar um arquivo já existente.
+
+Criação de conta, passo a passo:
 
 1. A pessoa solicita acesso pela tela de login (nome, e-mail, motivo).
 2. O administrador revisa a solicitação no Painel Administrativo.
-3. Aprovando, o administrador gera o hash da senha com `scripts/gerar_hash_senha.py` e adiciona o usuário em `auth/users.yaml` (formato padrão do `streamlit-authenticator`: credenciais, nome do cookie, chave, validade em dias, e-mails pré-autorizados).
+3. Aprovando, o administrador gera o hash da senha com `scripts/gerar_hash_senha.py` e adiciona o usuário na seção `[auth.credentials.usernames.<usuario>]` dos Secrets (local **e** do Streamlit Community Cloud, se a conta precisa valer em produção).
 4. O administrador marca a solicitação como "criada" no painel, para sair da lista de pendentes.
 
-Revogar acesso segue o caminho inverso: remover/desabilitar o usuário em `auth/users.yaml` e marcar a solicitação como "revogada" no painel (o painel registra o histórico; a revogação de acesso real sempre acontece no arquivo de credenciais).
+Revogar acesso segue o caminho inverso: remover o usuário dos Secrets (e do `auth/users.yaml` local, se ele também estiver lá) e marcar a solicitação como "revogada" no painel (o painel registra o histórico; a revogação de acesso real sempre acontece na fonte de credenciais).
 
 ## Deploy
 
-Hospedado no **Streamlit Community Cloud**, apontando para este repositório. Qualquer alteração enviada ao branch de produção é publicada automaticamente. Os Secrets de produção (`cookie_key`, credenciais do Turso) são configurados direto no painel do Streamlit Community Cloud — nunca no código versionado.
+Hospedado no **Streamlit Community Cloud**, apontando para este repositório. Qualquer alteração enviada ao branch de produção é publicada automaticamente. Os Secrets de produção (base de usuários completa em `[auth]`, credenciais do Turso) são configurados direto no painel do Streamlit Community Cloud — nunca no código versionado.
+
+Se o repositório for **público**, isso é ainda mais importante: qualquer arquivo commitado é visível para qualquer pessoa, inclusive em commits antigos. Este projeto foi ajustado para não depender de nenhum arquivo sensível versionado (ver seções acima) — mas vale conferir a visibilidade do repositório em GitHub → Settings → Danger Zone, e considerar torná-lo privado se ele guardar qualquer histórico de commit anterior a esse ajuste.
 
 ## Segurança e privacidade
 
-- Senhas de usuários são armazenadas com hash (bcrypt) em `auth/users.yaml`, nunca em texto puro.
+- Senhas de usuários são armazenadas com hash (bcrypt), nunca em texto puro, e vivem nos Secrets do Streamlit — não no repositório Git (ver [Gestão de usuários](#gestão-de-usuários)).
 - O PAT do Azure DevOps de cada usuário nunca é salvo em disco, banco de dados ou Secrets — vive só na memória da sessão do navegador enquanto o usuário está logado.
 - As solicitações de acesso não disparam e-mail nem qualquer notificação externa — ficam visíveis só para quem acessa o Painel Administrativo dentro do próprio app.
 - A sessão de login é encerrada automaticamente ao fechar de verdade a aba/janela do navegador (não sobrevive além de um F5 dentro do prazo configurado).
+- Se o repositório já foi público em algum momento com `auth/users.yaml` commitado, trate os hashes de senha expostos naquele período como potencialmente comprometidos (mesmo com bcrypt, um hash exposto pode ser atacado offline) — o ideal é tornar o repositório privado e, quando possível, trocar as senhas dos usuários que estavam naquele arquivo.
 
 ## Limitações conhecidas
 
-- A criação/remoção de contas continua manual (edição de `auth/users.yaml`); o app organiza e documenta as solicitações, mas não provisiona usuários sozinho.
+- A criação/remoção de contas continua manual (edição dos Secrets, com `scripts/gerar_hash_senha.py` para gerar o hash); o app organiza e documenta as solicitações, mas não provisiona usuários sozinho.
 - O painel administrativo hoje reconhece um único usuário (`admin`) como administrador — dar esse acesso a mais pessoas exige alterar `ui/pages/admin_page.py`.
 - Indicadores que dependem de um campo específico (datas, Severidade, Coluna do Board etc.) só aparecem quando esse campo está mapeado nos dados importados — não há como calculá-los sem a informação correspondente no arquivo/consulta de origem.

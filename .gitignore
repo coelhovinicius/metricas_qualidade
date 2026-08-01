@@ -2,10 +2,14 @@
 # nos Secrets do Streamlit Cloud, não neste repositório)
 .streamlit/secrets.toml
 
-# Ambiente virtual Python
+# Python
+__pycache__/
+*.pyc
+*.pyo
 .venv/
 venv/
 env/
+*.egg-info/
 
 # Scripts
 scripts/
@@ -16,7 +20,8 @@ __pycache__/
 
 # Variáveis de ambiente
 .env
-#/auth/users.yaml
+auth/users.yaml
+*.pat
 
 # Arquivos de sistema
 .DS_Store
@@ -28,3 +33,9 @@ Thumbs.db
 *.zip
 sample_data/
 .ignore/
+
+# Editor / SO
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

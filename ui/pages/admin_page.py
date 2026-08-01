@@ -21,8 +21,9 @@ from core.turso_client import TursoError
 from ui.components import action_button, finish_action, loading_overlay, render_header
 
 # Usuário (login, não o nome de exibição) tratado como administrador. Hoje só
-# você tem esse acesso - se quiser dar acesso ao painel pra outro usuário no futuro,
-# é só trocar por uma lista/tupla aqui.
+# você tem esse acesso - se quiser dar acesso ao painel pra outro usuário
+# cadastrado (nos Secrets ou em auth/users.yaml, ver auth/auth_manager.py) no
+# futuro, é só trocar por uma lista/tupla aqui.
 USUARIO_ADMIN = "admin"
 
 # E-mails que nunca mostram o botão de revogar na seção "Já criadas" - a
@@ -77,7 +78,11 @@ def render_admin_page() -> None:
 
     st.markdown(f"### Pendentes ({len(pendentes)})")
     st.caption(
-        "Ao criar a conta manualmente, marque a solicitação como 'criada'."
+        "Ao criar a conta manualmente — gerando o hash da senha com "
+        "`scripts/gerar_hash_senha.py` e adicionando o usuário em `[auth.credentials.usernames.*]` "
+        "nos Secrets do Streamlit (local e/ou do Streamlit Community Cloud; `auth/users.yaml` "
+        "local só entra como fallback de desenvolvimento, nunca deve ser commitado) — marque a "
+        "solicitação como criada para tirá-la da lista de pendentes."
     )
     if not pendentes:
         st.info("Nenhuma solicitação pendente no momento.")
@@ -88,9 +93,10 @@ def render_admin_page() -> None:
         if criadas:
             st.caption(
                 "Revogar aqui só atualiza o status neste painel (controle/auditoria) - "
-                "lembre de também remover o acesso de verdade no arquivo de secrets "
-                "(apagando o usuário ou trocando a senha), pois a criação/remoção "
-                "de conta continua manual, fora deste app."
+                "lembre de também remover o acesso de verdade (apagando o usuário ou trocando "
+                "a senha) nos Secrets do Streamlit — ou em `auth/users.yaml`, se essa conta "
+                "ainda estiver só no arquivo local —, já que a criação/remoção de conta "
+                "continua manual, fora deste app."
             )
         else:
             st.caption("Nenhuma ainda.")
@@ -101,10 +107,11 @@ def render_admin_page() -> None:
         if revogadas:
             st.caption(
                 "\"Reverter revogação\" manda de volta para \"Pendentes\" (não direto para "
-                "\"Já criadas\") - assim você reconfirma que a conta foi mesmo recriada em "
-                "nos 'secrets' antes de marcar como criada de novo. \"Excluir\" apaga o "
-                "registro desta solicitação de vez, sem afetar o acesso real de ninguém. Use "
-                "as caixas de seleção pra excluir várias de uma vez, em vez de uma por uma."
+                "\"Já criadas\") - assim você reconfirma que a conta foi mesmo recriada nos "
+                "Secrets (ou em `auth/users.yaml` local) antes de marcar como criada de novo. "
+                "\"Excluir\" apaga o registro desta solicitação de vez, sem afetar o acesso "
+                "real de ninguém. Use as caixas de seleção pra excluir várias de uma vez, em "
+                "vez de uma por uma."
             )
         else:
             st.caption("Nenhuma ainda.")
@@ -299,8 +306,9 @@ def _renderizar_cartao_solicitacao(
                 if st.button("✅ Marcar como criada", key=f"criar_{solicitacao.id}", use_container_width=True):
                     _confirmar_acao(
                         solicitacao, "Sim, marcar como criada",
-                        "Confirma que a conta desta pessoa já foi criada de verdade? Isso"
-                        "só atualiza o status aqui no painel - não cria a conta sozinho.",
+                        "Confirma que a conta desta pessoa já foi criada de verdade nos "
+                        "Secrets do Streamlit (ou em `auth/users.yaml` local)? Isso só "
+                        "atualiza o status aqui no painel - não cria a conta sozinho.",
                         novo_status=STATUS_CRIADA,
                     )
                 if st.button("❌ Rejeitar", key=f"rejeitar_{solicitacao.id}", use_container_width=True):
@@ -319,7 +327,8 @@ def _renderizar_cartao_solicitacao(
                         solicitacao, "Sim, revogar acesso",
                         "⚠️ Isso marca o acesso desta pessoa como revogado aqui no painel. "
                         "NÃO desliga a conta de verdade sozinho - lembre de também remover/"
-                        "desabilitar o usuário.",
+                        "desabilitar o usuário nos Secrets do Streamlit (ou em "
+                        "`auth/users.yaml` local, se essa conta ainda estiver só lá).",
                         novo_status=STATUS_REVOGADA,
                     )
         else:
@@ -330,8 +339,8 @@ def _renderizar_cartao_solicitacao(
                             solicitacao, "Sim, reverter revogação",
                             "Confirma que quer mover esta solicitação de volta para "
                             "\"Pendentes\"? Isso NÃO recria a conta sozinho - se você já "
-                            "removeu o usuário, lembre de recriá-lo antes de marcar "
-                            "como criada novamente."
+                            "removeu o usuário dos Secrets (ou de `auth/users.yaml` local), "
+                            "lembre de recriá-lo antes de marcar como criada de novo.",
                             novo_status=STATUS_PENDENTE,
                         )
                 if mostrar_recuperar:

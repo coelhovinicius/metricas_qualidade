@@ -2,7 +2,8 @@
 Gerenciador de autenticação da aplicação.
 
 Responsável por:
-    - Carregar as credenciais dos usuários a partir de `auth/users.yaml`;
+    - Carregar as credenciais dos usuários (ver "De onde vêm as credenciais"
+      abaixo);
     - Renderizar o formulário de login;
     - Manter a sessão do usuário persistida em cookie do navegador, para que
       um F5 (refresh) na página não exija login novamente;
@@ -11,22 +12,46 @@ Responsável por:
 Baseado na biblioteca `streamlit-authenticator`, que implementa o
 armazenamento de sessão via cookie assinado (persistência de sessão real,
 sobrevive a reloads da página dentro do prazo de expiração configurado em
-`users.yaml -> cookie.expiry_days`).
+`cookie.expiry_days`).
+
+De onde vêm as credenciais (usuários, hash de senha, config do cookie):
+    Prioridade 1 - Secrets do Streamlit (`st.secrets["auth"]`), com a seção
+    inteira (`credentials`, `cookie`, `preauthorized`) dentro de `[auth]` -
+    é o caminho usado em produção (Streamlit Community Cloud). Assim, o
+    banco de usuários (incluindo hash de senha de cada um) nunca precisa
+    estar no repositório Git - só nos Secrets, que o Streamlit trata como
+    dado sensível e não versiona.
+
+    Prioridade 2 (fallback) - arquivo local `auth/users.yaml`, usado só
+    quando os Secrets não têm essa seção completa - pensado para rodar a
+    aplicação na sua própria máquina sem precisar configurar Secrets antes.
+    Esse arquivo NÃO deve ser commitado no Git (ver `.gitignore`) - motivo:
+    ele guarda hash de senha de cada usuário, e um repositório público (ou
+    qualquer pessoa com acesso ao repo, mesmo privado) não deveria ter
+    acesso a isso.
+
+    Ver `scripts/migrar_credenciais_para_secrets.py` para converter um
+    `auth/users.yaml` já existente no bloco TOML equivalente, pronto para
+    colar nos Secrets (local e/ou do Streamlit Community Cloud).
 
 Segurança da chave do cookie:
     A chave que assina o cookie de sessão (`cookie.key`) é o segredo mais
     sensível da aplicação - com ela, seria possível forjar uma sessão logada.
-    Por isso, em produção (ex.: Streamlit Community Cloud), essa chave deve
-    vir dos "Secrets" da plataforma (nunca do arquivo versionado no Git). O
-    valor definido em `users.yaml` só é usado como fallback para rodar a
-    aplicação localmente, em ambiente de desenvolvimento.
+    Quando as credenciais inteiras já vêm dos Secrets (prioridade 1 acima),
+    essa chave também vem de lá, dentro da mesma estrutura. Como reforço -
+    inclusive para quem ainda está só no fallback do arquivo local -, existe
+    também um override específico: se `st.secrets["auth"]["cookie_key"]`
+    (chave solta, fora de `credentials`) estiver definido, ele sempre vence
+    o que estiver em `cookie.key`, venha de onde vier. Nunca é obrigatório
+    ter as duas coisas - é só uma forma a mais de garantir que essa chave
+    específica nunca dependa só do arquivo local.
 """
 
 from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import streamlit as st
 import streamlit.components.v1 as components
@@ -35,6 +60,26 @@ import yaml
 from yaml.loader import SafeLoader
 
 USERS_YAML_PATH = Path(__file__).parent / "users.yaml"
+
+
+def _secrets_para_dict(valor: Any) -> Any:
+    """
+    Converte recursivamente um valor vindo de `st.secrets` num equivalente só
+    com tipos nativos do Python (dict/list/str/...).
+
+    `st.secrets` não devolve um `dict` "de verdade" - devolve um tipo próprio
+    do Streamlit (parecido com dict, navegável com `["chave"]`/`.items()`,
+    mas não é uma instância de `dict`). A `streamlit-authenticator` faz
+    operações internas (cópia, iteração, serialização) que esperam um `dict`
+    de verdade em todos os níveis - passar o objeto do Streamlit sem
+    converter pode falhar de forma sutil dependendo da versão da lib. Por
+    isso todo valor vindo de `st.secrets` passa por aqui antes de ser usado.
+    """
+    if hasattr(valor, "items"):  # dict comum OU o tipo especial de st.secrets
+        return {chave: _secrets_para_dict(item) for chave, item in valor.items()}
+    if isinstance(valor, (list, tuple)):
+        return [_secrets_para_dict(item) for item in valor]
+    return valor
 
 
 class AuthManager:
@@ -52,16 +97,49 @@ class AuthManager:
         )
 
     def _load_config(self) -> dict:
-        if not self._credentials_path.exists():
-            raise FileNotFoundError(
-                f"Arquivo de credenciais não encontrado em: {self._credentials_path}"
-            )
-        with open(self._credentials_path, "r", encoding="utf-8") as arquivo:
-            config = yaml.load(arquivo, Loader=SafeLoader)
+        config = self._carregar_de_secrets()
+        if config is None:
+            config = self._carregar_de_arquivo_local()
 
         chave_local = config.get("cookie", {}).get("key", "")
         config["cookie"]["key"] = self._resolver_cookie_key(chave_local)
         return config
+
+    @staticmethod
+    def _carregar_de_secrets() -> Optional[dict]:
+        """
+        Tenta montar a config inteira (credentials/cookie/preauthorized) a
+        partir de `st.secrets["auth"]` - fonte usada em produção, ver
+        docstring do módulo. Devolve `None` (sem levantar erro) quando essa
+        seção não existe ou não tem `credentials` dentro dela, para o
+        chamador cair no fallback do arquivo local em vez de travar.
+        """
+        try:
+            secao_auth = st.secrets.get("auth")
+        except Exception:
+            # st.secrets pode levantar exceção quando não existe nenhum
+            # secrets.toml configurado - comportamento normal em dev local
+            # sem esse arquivo, mesmo tratamento já usado em `_resolver_cookie_key`.
+            return None
+        if not secao_auth or "credentials" not in secao_auth:
+            return None
+        return _secrets_para_dict(secao_auth)
+
+    def _carregar_de_arquivo_local(self) -> dict:
+        """
+        Fallback de desenvolvimento: lê `auth/users.yaml` do disco. Só é
+        usado quando os Secrets não têm a seção `[auth].credentials`
+        completa - em produção, com os Secrets migrados, este método nunca
+        chega a ser chamado.
+        """
+        if not self._credentials_path.exists():
+            raise FileNotFoundError(
+                "Nenhuma credencial encontrada: configure [auth].credentials nos Secrets "
+                f"do Streamlit, ou crie o arquivo local de desenvolvimento em: "
+                f"{self._credentials_path}"
+            )
+        with open(self._credentials_path, "r", encoding="utf-8") as arquivo:
+            return yaml.load(arquivo, Loader=SafeLoader)
 
     @staticmethod
     def _resolver_cookie_key(chave_local: str) -> str:
