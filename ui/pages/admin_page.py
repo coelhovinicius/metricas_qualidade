@@ -77,9 +77,7 @@ def render_admin_page() -> None:
 
     st.markdown(f"### Pendentes ({len(pendentes)})")
     st.caption(
-        "Ao criar a conta manualmente em `auth/users.yaml` (gerando o hash da senha com "
-        "`scripts/gerar_hash_senha.py`, como já é feito hoje), marque a solicitação como "
-        "criada para tirá-la da lista de pendentes."
+        "Ao criar a conta manualmente, marque a solicitação como 'criada'."
     )
     if not pendentes:
         st.info("Nenhuma solicitação pendente no momento.")

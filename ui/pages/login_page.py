@@ -84,8 +84,8 @@ def _renderizar_botao_solicitacao_conta() -> None:
 @st.dialog("Solicitar criação de conta")
 def _dialogo_solicitar_acesso() -> None:
     st.caption(
-        "Preencha os dados abaixo. Sua solicitação fica registrada só no painel "
-        "administrativo — hoje, o administrador é a única pessoa com acesso a ela."
+        "Preencha os dados abaixo. Sua solicitação será registrada e enviada "
+        "para análise do administrador do sistema."
     )
     nome = st.text_input("Nome completo", key="solicitacao_nome")
     email = st.text_input("E-mail", key="solicitacao_email")
