@@ -402,17 +402,111 @@ def tendencia_temporal(df: pd.DataFrame, mapeamento: MapeamentoColunas) -> Optio
     return resultado
 
 
-def ranking_responsaveis(df: pd.DataFrame, mapeamento: MapeamentoColunas) -> Optional[pd.DataFrame]:
+def volume_por_responsavel(
+    df: pd.DataFrame, mapeamento: MapeamentoColunas, agrupar_por_projeto: bool = False
+) -> Optional[pd.DataFrame]:
+    """
+    Quantidade de registros (testes/itens) por Responsável/Executor - base do
+    gráfico "Volume de Testes por Responsável" no dashboard.
+
+    Com `agrupar_por_projeto=True` (e Projeto mapeado nos dados), abre a
+    contagem também por Projeto: devolve uma linha por combinação
+    Responsável × Projeto (colunas ["Responsável", "Projeto", "Quantidade"]),
+    já ordenada com o Responsável de maior volume total primeiro (e, dentro
+    dele, o Projeto de maior volume primeiro) - é o que permite colorir o
+    gráfico por Projeto e mostrar não só "quanto" cada pessoa fez, mas "em
+    que projeto(s)".
+
+    Sem agrupar (ou sem Projeto mapeado nos dados), devolve uma linha por
+    Responsável (colunas ["Responsável", "Quantidade"]), da maior pra menor.
+    """
     if not mapeamento.responsavel or mapeamento.responsavel not in df.columns:
         return None
+
+    usar_projeto = bool(agrupar_por_projeto and mapeamento.projeto and mapeamento.projeto in df.columns)
+    if usar_projeto:
+        resultado = (
+            df.groupby([mapeamento.responsavel, mapeamento.projeto], dropna=False)
+            .size()
+            .reset_index(name="Quantidade")
+            .rename(columns={mapeamento.responsavel: "Responsável", mapeamento.projeto: "Projeto"})
+        )
+        ordem_responsaveis = (
+            resultado.groupby("Responsável")["Quantidade"].sum().sort_values(ascending=False).index
+        )
+        resultado["Responsável"] = pd.Categorical(
+            resultado["Responsável"], categories=ordem_responsaveis, ordered=True
+        )
+        resultado = (
+            resultado.sort_values(["Responsável", "Quantidade"], ascending=[True, False])
+            .reset_index(drop=True)
+        )
+        resultado["Responsável"] = resultado["Responsável"].astype(str)
+        return resultado
+
     resultado = (
         df.groupby(mapeamento.responsavel, dropna=False)
         .size()
-        .reset_index(name="Testes Executados")
+        .reset_index(name="Quantidade")
         .rename(columns={mapeamento.responsavel: "Responsável"})
-        .sort_values("Testes Executados", ascending=False)
+        .sort_values("Quantidade", ascending=False)
     )
     return resultado
+
+
+def volume_responsavel_por_semana(
+    df: pd.DataFrame, mapeamento: MapeamentoColunas, limite_responsaveis: int = 8
+) -> tuple[Optional[pd.DataFrame], bool]:
+    """
+    Volume de registros por Responsável/Executor ao longo do tempo, agregado
+    por SEMANA - mesma granularidade já usada em "Tendência ao Longo do
+    Tempo" e "Bugs Abertos vs. Solucionados" (`tendencia_temporal`,
+    `bugs_abertos_vs_solucionados`). Por DIA, o volume individual costuma ser
+    baixo (poucas unidades por pessoa), o que deixa a série extremamente
+    "serrilhada" e domina mais pelo dia da semana (ex.: quase sempre menos
+    aos fins de semana) do que por variação real de ritmo - por semana, o
+    padrão de fato relevante (alguém acelerando, desacelerando, ou saindo do
+    ritmo do time) fica muito mais visível.
+
+    Se houver mais de `limite_responsaveis` pessoas distintas com dado no
+    período, mantém só as `limite_responsaveis` de maior volume total (senão
+    o gráfico fica ilegível, com cores demais/linhas se sobrepondo) - o
+    segundo item do retorno avisa se esse corte aconteceu.
+
+    Retorna (dados, truncado): dados tem colunas ["Semana", "Responsável",
+    "Quantidade"], ou é None se faltar a coluna de data principal ou a de
+    Responsável nos dados.
+    """
+    coluna_data = mapeamento.coluna_data_principal()
+    if not coluna_data or coluna_data not in df.columns:
+        return None, False
+    if not mapeamento.responsavel or mapeamento.responsavel not in df.columns:
+        return None, False
+
+    datas = pd.to_datetime(df[coluna_data], errors="coerce")
+    if datas.notna().sum() == 0:
+        return None, False
+
+    temp = df.copy()
+    temp["__data__"] = datas
+    temp = temp.dropna(subset=["__data__"])
+    temp["__semana__"] = temp["__data__"].dt.to_period("W").dt.start_time
+
+    contagem_responsaveis = temp[mapeamento.responsavel].value_counts()
+    truncado = len(contagem_responsaveis) > limite_responsaveis
+    if truncado:
+        mantidos = set(contagem_responsaveis.head(limite_responsaveis).index)
+        temp = temp[temp[mapeamento.responsavel].isin(mantidos)]
+
+    resultado = (
+        temp.groupby(["__semana__", mapeamento.responsavel], dropna=False)
+        .size()
+        .reset_index(name="Quantidade")
+        .rename(columns={"__semana__": "Semana", mapeamento.responsavel: "Responsável"})
+        .sort_values("Semana")
+        .reset_index(drop=True)
+    )
+    return resultado, truncado
 
 
 def distribuicao_severidade(df: pd.DataFrame, mapeamento: MapeamentoColunas) -> Optional[pd.DataFrame]:
@@ -516,33 +610,25 @@ def detalhamento_nao_atribuido_coluna_board(
     return resultado
 
 
-def excluir_nao_atribuido_coluna_board_por_tipo(
-    df: pd.DataFrame, mapeamento: MapeamentoColunas, tipos_incluidos: set
-) -> pd.DataFrame:
+def excluir_nao_atribuido_coluna_board(df: pd.DataFrame, mapeamento: MapeamentoColunas) -> pd.DataFrame:
     """
     Devolve uma cópia de `df` sem as linhas "Não atribuído(a)" de Coluna do
-    Board cujo Tipo de Teste/Work Item Type NÃO esteja em `tipos_incluidos` -
-    usado pra deixar o usuário reincluir, tipo a tipo, itens sem coluna de
-    board nos gráficos de Coluna do Board (por padrão todos ficam de fora,
-    já que a intenção é enxergar o fluxo real do board sem o "ruído" de
-    itens que nunca estiveram nele - ver
-    `detalhamento_nao_atribuido_coluna_board`, que gera a lista de tipos
-    disponível pra essa reinclusão).
+    Board - usado só na hora de montar os gráficos de Coluna do Board
+    (Distribuição por Coluna do Board / Area Path × Coluna do Board), pra
+    que eles mostrem só o fluxo real do board, sem o "ruído" de itens que
+    nunca estiveram em nenhuma coluna (ver `detalhamento_nao_atribuido_coluna_board`
+    pra entender/conferir quem são esses itens, por tipo).
 
+    Sempre exclui, sem exceção - não existe opção de reincluir por tipo.
     Nunca afeta: linhas com uma Coluna do Board de verdade (só mexe nas
-    rotuladas "Não atribuído(a)"); nem o restante do dashboard - é usado só
-    na hora de montar os gráficos de Coluna do Board, o resto dos
+    rotuladas "Não atribuído(a)"); nem o restante do dashboard - o resto dos
     indicadores continua vendo todos os itens normalmente. Se Coluna do
-    Board ou Tipo de Teste não estiverem mapeados, devolve `df` sem
-    alteração (não tem como filtrar sem esses dois campos).
+    Board não estiver mapeada, devolve `df` sem alteração (não tem como
+    filtrar sem esse campo).
     """
     if not mapeamento.coluna_board or mapeamento.coluna_board not in df.columns:
         return df
-    if not mapeamento.tipo_teste or mapeamento.tipo_teste not in df.columns:
-        return df
-    eh_nao_atribuido = df[mapeamento.coluna_board] == ROTULO_VAZIO_PADRAO
-    tipo_nao_incluido = ~df[mapeamento.tipo_teste].isin(tipos_incluidos)
-    return df[~(eh_nao_atribuido & tipo_nao_incluido)]
+    return df[df[mapeamento.coluna_board] != ROTULO_VAZIO_PADRAO]
 
 
 def distribuicao_area_path_x_coluna_board(
@@ -905,249 +991,3 @@ def bugs_abertos_vs_solucionados(
 
     resultado = acumulado.reset_index().rename(columns={"__semana__": "Semana"})
     return resultado[["Semana", "Bugs Criados (acumulado)", *colunas_categoria]]
-
-
-# ---------------------------------------------------------------------------
-# Scorecard de Qualidade: dados para o radar preenchido que compara várias
-# dimensões de qualidade AO MESMO TEMPO - uma forma colorida por entidade
-# escolhida pelo usuário (Projeto, Responsável, Tipo de Teste, ou qualquer
-# outra coluna), cada eixo com uma nota de 0 a 10. Diferente do construtor de
-# gráfico personalizado (uma métrica só, espalhada por categorias), aqui cada
-# eixo é uma métrica DIFERENTE - por isso cada uma passa por uma normalização
-# própria antes de entrar no mesmo gráfico (senão "quantidade de testes" e
-# "taxa de sucesso em %" não seriam comparáveis na mesma escala radial).
-# ---------------------------------------------------------------------------
-
-CRITERIOS_SCORECARD: dict[str, str] = {
-    "taxa_sucesso": "Taxa de Sucesso",
-    "cobertura": "Cobertura / Volume",
-    "taxa_bugs_invertida": "Taxa de Bugs (invertida)",
-    "aderencia_planejado": "Aderência ao Planejado",
-    "severidade_critica_invertida": "Severidade Crítica (invertida)",
-    "agilidade_backlog_invertida": "Agilidade do Backlog (invertida)",
-}
-
-_PALAVRAS_SEVERIDADE_CRITICA = {
-    "critico",
-    "critica",
-    "critical",
-    "alto",
-    "alta",
-    "high",
-    "urgente",
-    "urgent",
-    "blocker",
-    "bloqueador",
-    "bloqueadora",
-}
-
-
-def _eh_severidade_critica(valor: object) -> bool:
-    texto = _normalizar_texto_simples(valor)
-    return any(palavra in texto for palavra in _PALAVRAS_SEVERIDADE_CRITICA)
-
-
-def calcular_scorecard_qualidade(
-    df: pd.DataFrame,
-    mapeamento: MapeamentoColunas,
-    coluna_entidade: str,
-    criterios: list[str],
-    colunas_aguardando_externo: Optional[set[str]] = None,
-    limite_entidades: int = 8,
-) -> tuple[Optional[pd.DataFrame], list[str], bool]:
-    """
-    Monta os dados do "Scorecard de Qualidade": um radar preenchido em que
-    cada forma colorida é uma entidade (valor distinto de `coluna_entidade`,
-    ex.: um Projeto) e cada eixo é uma nota de 0 a 10 num critério de
-    `criterios` (chaves de `CRITERIOS_SCORECARD`).
-
-    Cada critério só entra no resultado se os dados atuais permitirem
-    calculá-lo (ex.: "Taxa de Sucesso" exige status binário reconhecível;
-    "Aderência ao Planejado" exige datas de planejamento/execução ou a
-    categoria "Planejado" no status). Critérios pedidos mas não calculáveis
-    voltam em `criterios_indisponiveis`, para a interface avisar o motivo em
-    vez de simplesmente omiti-los sem explicação.
-
-    "Agilidade do Backlog" usa a mesma definição de "item em aberto" do
-    indicador de Backlog Aberto, e - quando `colunas_aguardando_externo` é
-    informado - desconta itens parados numa coluna do board marcada como
-    fora do controle da QA (mesma lógica de `bugs_abertos_vs_solucionados`),
-    para não penalizar a QA por uma espera que não é dela.
-
-    Entidades sem executados/planejados/etc. suficientes para calcular um
-    critério recebem nota 0 nesse eixo (em vez de um buraco no polígono) -
-    é uma escolha deliberada para manter o radar sempre fechado e legível;
-    a interface deve avisar essa convenção ao usuário.
-
-    Se `coluna_entidade` tiver mais de `limite_entidades` valores distintos,
-    mantém só os `limite_entidades` com mais registros (senão o radar fica
-    ilegível, com cores repetidas na paleta) - o terceiro item do retorno
-    indica se esse corte aconteceu.
-
-    Retorna (dados_longos, criterios_indisponiveis, entidades_truncadas):
-        dados_longos tem colunas ["Entidade", "Critério", "Nota"], ou é None
-        se a coluna de entidade não existe ou nenhum critério pôde ser
-        calculado.
-    """
-    if not coluna_entidade or coluna_entidade not in df.columns or df.empty:
-        return None, [], False
-
-    disponiveis: list[str] = []
-    indisponiveis: list[str] = []
-
-    if "taxa_sucesso" in criterios:
-        if status_e_binario(df):
-            disponiveis.append("taxa_sucesso")
-        else:
-            indisponiveis.append(CRITERIOS_SCORECARD["taxa_sucesso"])
-
-    if "cobertura" in criterios:
-        disponiveis.append("cobertura")  # sempre calculável: é só contagem de registros
-
-    tem_tipo_teste = bool(mapeamento.tipo_teste and mapeamento.tipo_teste in df.columns)
-    if "taxa_bugs_invertida" in criterios:
-        if tem_tipo_teste:
-            disponiveis.append("taxa_bugs_invertida")
-        else:
-            indisponiveis.append(CRITERIOS_SCORECARD["taxa_bugs_invertida"])
-
-    aderencia_modo: Optional[str] = None
-    if "aderencia_planejado" in criterios:
-        if status_e_binario(df) and (df["__status_normalizado__"] == "Planejado").any():
-            aderencia_modo = "status"
-        else:
-            coluna_execucao_ou_criacao = mapeamento.data_execucao or mapeamento.data_criacao
-            if (
-                mapeamento.data_planejada
-                and mapeamento.data_planejada in df.columns
-                and coluna_execucao_ou_criacao
-                and coluna_execucao_ou_criacao in df.columns
-            ):
-                aderencia_modo = "datas"
-        if aderencia_modo:
-            disponiveis.append("aderencia_planejado")
-        else:
-            indisponiveis.append(CRITERIOS_SCORECARD["aderencia_planejado"])
-
-    tem_severidade = bool(mapeamento.severidade and mapeamento.severidade in df.columns)
-    if "severidade_critica_invertida" in criterios:
-        if tem_severidade:
-            disponiveis.append("severidade_critica_invertida")
-        else:
-            indisponiveis.append(CRITERIOS_SCORECARD["severidade_critica_invertida"])
-
-    coluna_data_principal = mapeamento.coluna_data_principal()
-    tem_backlog = bool(
-        mapeamento.status
-        and mapeamento.status in df.columns
-        and coluna_data_principal
-        and coluna_data_principal in df.columns
-    )
-    mascara_aberto_backlog = None
-    datas_backlog = None
-    if "agilidade_backlog_invertida" in criterios:
-        if tem_backlog:
-            disponiveis.append("agilidade_backlog_invertida")
-            mascara_aberto_backlog = _mascara_itens_em_aberto(df, mapeamento)
-            datas_backlog = pd.to_datetime(df[coluna_data_principal], errors="coerce")
-            mascara_aberto_backlog = mascara_aberto_backlog & datas_backlog.notna()
-            if (
-                colunas_aguardando_externo
-                and mapeamento.coluna_board
-                and mapeamento.coluna_board in df.columns
-            ):
-                valores_board = df[mapeamento.coluna_board].astype(str)
-                mascara_aberto_backlog = mascara_aberto_backlog & ~valores_board.isin(colunas_aguardando_externo)
-        else:
-            indisponiveis.append(CRITERIOS_SCORECARD["agilidade_backlog_invertida"])
-
-    if not disponiveis:
-        return None, indisponiveis, False
-
-    entidades = _rotular_valores_vazios(df[coluna_entidade]).astype(str)
-
-    contagem_entidades = entidades.value_counts()
-    entidades_mantidas = contagem_entidades.index.tolist()
-    entidades_truncadas = len(entidades_mantidas) > limite_entidades
-    if entidades_truncadas:
-        entidades_mantidas = contagem_entidades.head(limite_entidades).index.tolist()
-
-    linhas: list[tuple[str, str, float]] = []
-
-    for entidade in entidades_mantidas:
-        indices = entidades.index[entidades == entidade]
-        subset = df.loc[indices]
-        total = len(subset)
-
-        if "taxa_sucesso" in disponiveis:
-            passou = int((subset["__status_normalizado__"] == "Passou").sum())
-            falhou = int((subset["__status_normalizado__"] == "Falhou").sum())
-            executados = passou + falhou
-            nota = round((passou / executados) * 10, 2) if executados > 0 else 0.0
-            linhas.append((entidade, "taxa_sucesso", nota))
-
-        if "cobertura" in disponiveis:
-            linhas.append((entidade, "cobertura", float(total)))  # normalizada depois, entre entidades
-
-        if "taxa_bugs_invertida" in disponiveis:
-            bugs = int(
-                subset[mapeamento.tipo_teste].astype(str).str.contains("bug", case=False, na=False).sum()
-            )
-            proporcao = (bugs / total) if total else 0.0
-            linhas.append((entidade, "taxa_bugs_invertida", round(10 * (1 - proporcao), 2)))
-
-        if "aderencia_planejado" in disponiveis:
-            if aderencia_modo == "status":
-                planejado = int((subset["__status_normalizado__"] == "Planejado").sum())
-                efetivado = int(subset["__status_normalizado__"].isin(["Passou", "Falhou"]).sum())
-            else:
-                coluna_execucao_ou_criacao = mapeamento.data_execucao or mapeamento.data_criacao
-                planejado = int(subset[mapeamento.data_planejada].notna().sum())
-                efetivado = int(subset[coluna_execucao_ou_criacao].notna().sum())
-            if planejado > 0:
-                nota = round(min(efetivado / planejado, 1.0) * 10, 2)
-            else:
-                nota = 10.0 if efetivado > 0 else 0.0
-            linhas.append((entidade, "aderencia_planejado", nota))
-
-        if "severidade_critica_invertida" in disponiveis:
-            criticos = int(subset[mapeamento.severidade].apply(_eh_severidade_critica).sum())
-            proporcao = (criticos / total) if total else 0.0
-            linhas.append((entidade, "severidade_critica_invertida", round(10 * (1 - proporcao), 2)))
-
-        if "agilidade_backlog_invertida" in disponiveis:
-            mascara_subset = mascara_aberto_backlog.loc[indices]
-            if mascara_subset.any():
-                idade_media = (
-                    pd.Timestamp(datetime.now().date()) - datas_backlog.loc[indices][mascara_subset]
-                ).dt.days.mean()
-                nota = max(0.0, min(10.0, 10 - (idade_media / 90) * 10))
-            else:
-                nota = 10.0  # nada em aberto (descontada a espera externa): melhor cenário possível
-            linhas.append((entidade, "agilidade_backlog_invertida", round(nota, 2)))
-
-    tabela = pd.DataFrame(linhas, columns=["Entidade", "__criterio__", "Nota"])
-
-    if "cobertura" in disponiveis:
-        bruta = tabela.loc[tabela["__criterio__"] == "cobertura", "Nota"]
-        minimo, maximo = bruta.min(), bruta.max()
-        if maximo > minimo:
-            tabela.loc[tabela["__criterio__"] == "cobertura", "Nota"] = (
-                (bruta - minimo) / (maximo - minimo) * 10
-            ).round(2)
-        else:
-            tabela.loc[tabela["__criterio__"] == "cobertura", "Nota"] = 10.0
-
-    ordem_disponiveis = [chave for chave in CRITERIOS_SCORECARD if chave in disponiveis]
-    tabela["Critério"] = pd.Categorical(
-        tabela["__criterio__"].map(CRITERIOS_SCORECARD),
-        categories=[CRITERIOS_SCORECARD[chave] for chave in ordem_disponiveis],
-        ordered=True,
-    )
-    tabela = (
-        tabela.drop(columns="__criterio__")
-        .sort_values(["Entidade", "Critério"])
-        .reset_index(drop=True)
-    )
-
-    return tabela[["Entidade", "Critério", "Nota"]], indisponiveis, entidades_truncadas

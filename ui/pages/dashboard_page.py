@@ -13,7 +13,7 @@ import streamlit as st
 from core import analytics
 from core.column_mapper import MapeamentoColunas
 from ui.components import action_button, finish_action, loading_overlay, render_header, render_kpi_row
-from ui.theme import PALETA_BUGS_TEMPO, PALETA_GRAFICOS, PALETA_STATUS, cor_discreta_coluna_board
+from ui.theme import PALETA_BUGS_TEMPO, PALETA_COLORIDA, PALETA_GRAFICOS, PALETA_STATUS, cor_discreta_coluna_board
 
 TIPOS_GRAFICO_PADRAO = ["Barras", "Barras Horizontais", "Pizza", "Rosca", "Linha", "Área", "Treemap", "Pareto", "Radar (Preenchido)"]
 
@@ -122,8 +122,8 @@ def _selecionar_tipo_grafico(chave: str, opcoes: list[str] = None) -> str:
 
 
 def _cores_por_posicao(quantidade: int) -> list[str]:
-    """Cicla pela paleta de gráficos, uma cor por posição/categoria (não por valor)."""
-    return [PALETA_GRAFICOS[indice % len(PALETA_GRAFICOS)] for indice in range(quantidade)]
+    """Cicla pela paleta colorida (30 tons), uma cor por posição/categoria (não por valor)."""
+    return [PALETA_COLORIDA[indice % len(PALETA_COLORIDA)] for indice in range(quantidade)]
 
 
 def _construir_grafico_pareto(df: pd.DataFrame, x: str, y: str) -> go.Figure:
@@ -214,7 +214,7 @@ def _plotar(
         return _cores_por_posicao(len(df))
 
     if tipo == "Barras":
-        fig = px.bar(df, x=x, y=y, color=cor, color_discrete_sequence=PALETA_GRAFICOS,
+        fig = px.bar(df, x=x, y=y, color=cor, color_discrete_sequence=PALETA_COLORIDA,
                       color_discrete_map=cor_discreta, text_auto=True, category_orders=ordem_categorias)
         if cor is None:
             # Sem uma segunda dimensão pra agrupar/empilhar: colore cada barra por
@@ -222,7 +222,7 @@ def _plotar(
             # com uma cor por categoria em vez de uma cor única pra todo o gráfico.
             fig.update_traces(marker_color=_cores_para_barras(x))
     elif tipo == "Barras Horizontais":
-        fig = px.bar(df, x=y, y=x, color=cor, orientation="h", color_discrete_sequence=PALETA_GRAFICOS,
+        fig = px.bar(df, x=y, y=x, color=cor, orientation="h", color_discrete_sequence=PALETA_COLORIDA,
                       color_discrete_map=cor_discreta, text_auto=True, category_orders=ordem_categorias)
         if cor is None:
             fig.update_traces(marker_color=_cores_para_barras(x))
@@ -232,14 +232,14 @@ def _plotar(
         # posição) - por isso, quando não há uma segunda dimensão mas o eixo É
         # a Coluna do Board, usa a própria coluna de nomes (`x`) como `color`.
         cor_pizza = cor or (x if cor_coluna_board_sem_dimensao else None)
-        fig = px.pie(df, names=x, values=y, color=cor_pizza, color_discrete_sequence=PALETA_GRAFICOS,
+        fig = px.pie(df, names=x, values=y, color=cor_pizza, color_discrete_sequence=PALETA_COLORIDA,
                       color_discrete_map=cor_discreta, category_orders=ordem_categorias)
     elif tipo == "Rosca":
         cor_pizza = cor or (x if cor_coluna_board_sem_dimensao else None)
-        fig = px.pie(df, names=x, values=y, color=cor_pizza, color_discrete_sequence=PALETA_GRAFICOS,
+        fig = px.pie(df, names=x, values=y, color=cor_pizza, color_discrete_sequence=PALETA_COLORIDA,
                       color_discrete_map=cor_discreta, hole=0.45, category_orders=ordem_categorias)
     elif tipo == "Área":
-        fig = px.area(df, x=x, y=y, color=cor, color_discrete_sequence=PALETA_GRAFICOS,
+        fig = px.area(df, x=x, y=y, color=cor, color_discrete_sequence=PALETA_COLORIDA,
                        color_discrete_map=cor_discreta, category_orders=ordem_categorias)
     elif tipo == "Treemap":
         # Com uma segunda dimensão (cor/grupo) escolhida, o Treemap vira
@@ -258,7 +258,7 @@ def _plotar(
         cor_discreta_treemap = cor_discreta
         if cor_discreta_treemap is None and (cor or x) == "Coluna do Board":
             cor_discreta_treemap = cor_discreta_coluna_board(set(df[cor or x]))
-        fig = px.treemap(df, path=caminho, values=y, color=cor or x, color_discrete_sequence=PALETA_GRAFICOS,
+        fig = px.treemap(df, path=caminho, values=y, color=cor or x, color_discrete_sequence=PALETA_COLORIDA,
                           color_discrete_map=cor_discreta_treemap)
     elif tipo == "Pareto":
         fig = _construir_grafico_pareto(df, x, y)
@@ -272,7 +272,7 @@ def _plotar(
         # temporais (Semana) nem pra 2 categorias só (vira só uma linha reta) -
         # por isso não é oferecido nesses gráficos.
         fig = px.line_polar(df, r=y, theta=x, color=cor, line_close=True,
-                             color_discrete_sequence=PALETA_GRAFICOS, color_discrete_map=cor_discreta,
+                             color_discrete_sequence=PALETA_COLORIDA, color_discrete_map=cor_discreta,
                              category_orders=ordem_categorias)
         fig.update_traces(
             fill="toself",
@@ -298,7 +298,7 @@ def _plotar(
             )
         )
     else:  # Linha
-        fig = px.line(df, x=x, y=y, color=cor, color_discrete_sequence=PALETA_GRAFICOS,
+        fig = px.line(df, x=x, y=y, color=cor, color_discrete_sequence=PALETA_COLORIDA,
                        color_discrete_map=cor_discreta, markers=True, category_orders=ordem_categorias)
 
     fig.update_layout(
@@ -589,13 +589,6 @@ def render_dashboard_page() -> None:
                 chave="bugs_tempo", cor="Categoria")
         st.divider()
 
-    # ------------------------------------------------- Ranking de responsáveis
-    df_responsaveis = analytics.ranking_responsaveis(df_filtrado, mapeamento)
-    if df_responsaveis is not None and not df_responsaveis.empty:
-        st.markdown("**Testes por Responsável**")
-        _plotar(df_responsaveis, "Barras", x="Responsável", y="Testes Executados", chave="responsaveis")
-        st.divider()
-
     # ------------------------------------------------- Distribuição de severidade
     df_severidade = analytics.distribuicao_severidade(df_filtrado, mapeamento)
     if df_severidade is not None and not df_severidade.empty:
@@ -618,52 +611,36 @@ def render_dashboard_page() -> None:
             "(Backlog → Finalizado), não a quantidade — assim dá pra ver o funil/gargalo. "
             "Tipos de work item que não aparecem em nenhum board (ex.: Test Case, que vive em "
             "Test Plans/Test Suites) herdam a coluna do item pai vinculado, quando existir esse "
-            "vínculo. Só entram como **Não atribuído(a)** os itens sem pai vinculado, ou cujo "
-            "pai também não está em nenhuma coluna — e, por padrão, esses itens **não aparecem "
-            "neste gráfico nem no cruzamento Area Path × Coluna do Board logo abaixo** (veja "
-            "como reincluí-los, por tipo, no expansor abaixo)."
+            "vínculo. Itens sem pai vinculado, ou cujo pai também não está em nenhuma coluna, "
+            "ficam sem Coluna do Board — esses itens **não entram neste gráfico nem no "
+            "cruzamento Area Path × Coluna do Board logo abaixo** (ver detalhamento por tipo no "
+            "expansor abaixo)."
         )
         with st.expander("Lista oficial de colunas usada para ordenar (não limita quais colunas aparecem)"):
             st.write(", ".join(analytics.ORDEM_COLUNAS_BOARD))
 
         df_detalhe_nao_atribuido = analytics.detalhamento_nao_atribuido_coluna_board(df_filtrado, mapeamento)
-        tipos_reincluidos: list[str] = []
         if df_detalhe_nao_atribuido is not None and not df_detalhe_nao_atribuido.empty:
             with st.expander(
                 f"Por que {int(df_detalhe_nao_atribuido['Quantidade'].sum()):,}".replace(",", ".")
-                + ' item(ns) está(ão) como "Não atribuído(a)"? (ver por tipo, e reincluir se quiser)'
+                + ' item(ns) sem Coluna do Board não aparece(m) nos gráficos abaixo (ver por tipo)'
             ):
                 st.caption(
-                    "Quebra dos itens **Não atribuído(a)** por Tipo de Work Item. Ajuda a "
-                    "diferenciar as duas causas possíveis: **(a)** o tipo simplesmente nunca "
-                    "aparece em nenhum board no Azure DevOps (ex.: Test Case, que vive em Test "
-                    "Plans/Test Suites) e não tem um item pai vinculado pra herdar a coluna dele "
-                    "— nesse caso é o esperado, não é bug; **(b)** o tipo normalmente aparece no "
-                    "board (ex.: Bug, User Story, Task) mas mesmo assim veio sem coluna direto da "
-                    "API do Azure DevOps — o que costuma acontecer quando o Area Path do item não "
-                    "está associado a nenhum Time, ou o Time responsável não tem uma coluna "
-                    "mapeada pro State atual do item nas configurações do board dele (isso é "
-                    "configuração do lado do Azure DevOps, não algo que o app calcula)."
+                    "Quebra, por Tipo de Work Item, dos itens sem Coluna do Board - excluídos "
+                    "dos dois gráficos abaixo. Ajuda a diferenciar as duas causas possíveis: "
+                    "**(a)** o tipo simplesmente nunca aparece em nenhum board no Azure DevOps "
+                    "(ex.: Test Case, que vive em Test Plans/Test Suites) e não tem um item pai "
+                    "vinculado pra herdar a coluna dele — nesse caso é o esperado, não é bug; "
+                    "**(b)** o tipo normalmente aparece no board (ex.: Bug, User Story, Task) mas "
+                    "mesmo assim veio sem coluna direto da API do Azure DevOps — o que costuma "
+                    "acontecer quando o Area Path do item não está associado a nenhum Time, ou o "
+                    "Time responsável não tem uma coluna mapeada pro State atual do item nas "
+                    "configurações do board dele (isso é configuração do lado do Azure DevOps, "
+                    "não algo que o app calcula)."
                 )
                 st.dataframe(df_detalhe_nao_atribuido, use_container_width=True, hide_index=True)
-                tipos_reincluidos = st.multiselect(
-                    'Reincluir itens "Não atribuído(a)" destes tipos nos dois gráficos abaixo',
-                    options=df_detalhe_nao_atribuido["Tipo"].tolist(),
-                    default=[],
-                    key="coluna_board_tipos_nao_atribuido_reincluidos",
-                    help=(
-                        "Por padrão, todo item sem Coluna do Board (de nenhum tipo) fica de fora "
-                        "da Distribuição por Coluna do Board e do cruzamento Area Path × Coluna "
-                        "do Board. Marque um tipo aqui pra voltar a incluir esses itens (como "
-                        '"Não atribuído(a)") nos dois gráficos — dá pra reincluir um tipo de '
-                        "cada vez, sem precisar reincluir todos juntos, e desmarcar de novo a "
-                        "qualquer momento."
-                    ),
-                )
 
-        df_para_graficos_coluna_board = analytics.excluir_nao_atribuido_coluna_board_por_tipo(
-            df_filtrado, mapeamento, set(tipos_reincluidos)
-        )
+        df_para_graficos_coluna_board = analytics.excluir_nao_atribuido_coluna_board(df_filtrado, mapeamento)
         df_coluna_board = analytics.distribuicao_coluna_board(df_para_graficos_coluna_board, mapeamento)
 
         col_board, _col_espaco_board = st.columns([1, 3])
@@ -691,8 +668,8 @@ def render_dashboard_page() -> None:
                 "Area Path estão parados em cada coluna, na ordem real do fluxo (Backlog → "
                 "Finalizado), em vez de só o total geral por coluna. Ajuda a enxergar onde "
                 "exatamente está o gargalo: por exemplo, um Area Path específico acumulando "
-                'muito item numa coluna só. Segue a mesma inclusão/exclusão de "Não '
-                'atribuído(a)" por tipo escolhida acima.'
+                'muito item numa coluna só. Também não inclui itens "Não atribuído(a)" (ver '
+                "detalhamento acima)."
             )
             col_area_board, _col_espaco_area_board = st.columns([1, 3])
             with col_area_board:
@@ -706,74 +683,65 @@ def render_dashboard_page() -> None:
             )
             st.divider()
 
-    # ------------------------------------------------- Scorecard de Qualidade (Radar Preenchido)
-    st.markdown("**Scorecard de Qualidade (Radar Preenchido)**")
-    st.caption(
-        "Compara várias dimensões de qualidade ao mesmo tempo — cada entidade escolhida (ex.: "
-        "um Projeto) vira uma borda/eixo do radar, e cada critério vira uma forma colorida "
-        "sobreposta, com uma nota de 0 a 10 em cada borda. É o gráfico de radar preenchido "
-        "\"de verdade\" (várias métricas diferentes por forma), diferente do construtor "
-        "personalizado abaixo (uma métrica só, espalhada por categorias)."
-    )
-    colunas_disponiveis_scorecard = _colunas_disponiveis_para_grafico(df_filtrado, mapeamento)
-    if not colunas_disponiveis_scorecard:
-        st.info("Nenhuma coluna disponível para montar o scorecard.")
-    else:
-        col_entidade, col_criterios = st.columns([1, 2])
-        rotulos_entidade = list(colunas_disponiveis_scorecard.keys())
-        with col_entidade:
-            indice_padrao = rotulos_entidade.index("Projeto") if "Projeto" in rotulos_entidade else 0
-            rotulo_entidade = st.selectbox(
-                "Comparar por", rotulos_entidade, index=indice_padrao, key="scorecard_entidade",
-                help="Cada valor distinto dessa coluna vira uma borda/eixo (ponta) do radar.",
+    # ------------------------------------------------- Volume de Testes por Responsável
+    if mapeamento.responsavel and mapeamento.responsavel in df_filtrado.columns:
+        st.markdown("**Volume de Testes por Responsável**")
+        projeto_disponivel_responsavel = bool(mapeamento.projeto and mapeamento.projeto in df_filtrado.columns)
+        col_agrupar, col_tipo_resp, _col_espaco = st.columns([1.4, 1, 2])
+        with col_agrupar:
+            agrupar_por_projeto = st.checkbox(
+                "Agrupar por Projeto",
+                value=projeto_disponivel_responsavel,
+                key="volume_responsavel_agrupar_projeto",
+                disabled=not projeto_disponivel_responsavel,
+                help=(
+                    "Divide a barra de cada Responsável pelos Projetos em que atuou, em vez de "
+                    "mostrar só o total."
+                ),
             )
-        coluna_entidade_scorecard = colunas_disponiveis_scorecard[rotulo_entidade]
-        with col_criterios:
-            rotulos_criterios_selecionados = st.multiselect(
-                "Critérios (eixos)",
-                options=list(analytics.CRITERIOS_SCORECARD.values()),
-                default=list(analytics.CRITERIOS_SCORECARD.values()),
-                key="scorecard_criterios",
+        with col_tipo_resp:
+            tipo_volume_responsavel = _selecionar_tipo_grafico(
+                "volume_responsavel", ["Barras", "Barras Horizontais", "Treemap", "Pizza", "Rosca"]
             )
-        criterios_selecionados = [
-            chave
-            for chave, rotulo in analytics.CRITERIOS_SCORECARD.items()
-            if rotulo in rotulos_criterios_selecionados
-        ]
-
-        if len(criterios_selecionados) < 3:
-            st.info("Escolha pelo menos 3 critérios para formar um radar com uma forma reconhecível.")
+        df_volume_responsavel = analytics.volume_por_responsavel(
+            df_filtrado,
+            mapeamento,
+            agrupar_por_projeto=agrupar_por_projeto and projeto_disponivel_responsavel,
+        )
+        if df_volume_responsavel is not None and not df_volume_responsavel.empty:
+            _plotar(
+                df_volume_responsavel, tipo_volume_responsavel, x="Responsável", y="Quantidade",
+                chave="volume_responsavel",
+                cor="Projeto" if "Projeto" in df_volume_responsavel.columns else None,
+            )
         else:
-            dados_scorecard, criterios_indisponiveis, entidades_truncadas = analytics.calcular_scorecard_qualidade(
-                df_filtrado,
-                mapeamento,
-                coluna_entidade_scorecard,
-                criterios_selecionados,
-                colunas_aguardando_externo=set(colunas_externas_selecionadas),
+            st.info("Sem dados suficientes de Responsável para montar este gráfico.")
+        st.divider()
+
+    # ------------------------------------------------- Volume por Responsável ao longo do tempo
+    df_volume_tempo, volume_tempo_truncado = analytics.volume_responsavel_por_semana(df_filtrado, mapeamento)
+    if df_volume_tempo is not None and not df_volume_tempo.empty:
+        st.markdown("**Volume por Responsável ao Longo do Tempo**")
+        st.caption(
+            "Acumulado por semana (não por dia) - o volume individual por dia costuma ser baixo, "
+            "o que deixaria a linha muito irregular e dominada pelo dia da semana, escondendo o "
+            "padrão real de ritmo de cada pessoa. Mostra a soma de todos os Projetos que estiverem "
+            "marcados no filtro **Projeto** da barra lateral — para ver a tendência de um Projeto "
+            "específico, marque só ele lá."
+        )
+        col_tipo_volume_tempo, _col_espaco = st.columns([1, 3])
+        with col_tipo_volume_tempo:
+            tipo_volume_tempo = _selecionar_tipo_grafico("volume_responsavel_tempo", ["Linha", "Área", "Barras"])
+        _plotar(
+            df_volume_tempo, tipo_volume_tempo, x="Semana", y="Quantidade",
+            chave="volume_responsavel_tempo", cor="Responsável",
+        )
+        if volume_tempo_truncado:
+            st.caption(
+                "Mostrando só as 8 pessoas com mais registros no período (mais que isso deixaria "
+                "o gráfico ilegível, com muitas linhas/cores se cruzando)."
             )
-            if criterios_indisponiveis:
-                st.caption(
-                    "⚠️ Não calculados por falta de mapeamento nos dados atuais: "
-                    + ", ".join(criterios_indisponiveis)
-                )
-            if dados_scorecard is not None and not dados_scorecard.empty:
-                _plotar(
-                    dados_scorecard, "Radar (Preenchido)", x="Entidade", y="Nota",
-                    chave="scorecard_qualidade", cor="Critério",
-                )
-                avisos = [
-                    "Notas de 0 a 10. Entidades sem dado suficiente num critério aparecem com "
-                    "nota 0 na borda correspondente, em vez de um buraco no formato."
-                ]
-                if entidades_truncadas:
-                    avisos.append(
-                        f"Mostrando só as 8 entidades com mais registros em \"{rotulo_entidade}\" "
-                        "(mais que isso deixaria o radar ilegível)."
-                    )
-                st.caption(" ".join(avisos))
-            else:
-                st.info("Não foi possível calcular o scorecard com os critérios escolhidos.")
-    st.divider()
+        st.divider()
 
     # ------------------------------------------------- Construtor de gráfico personalizado
     _renderizar_construtor_grafico_personalizado(df_filtrado, mapeamento)

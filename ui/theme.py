@@ -17,16 +17,14 @@ BACKGROUND_COLOR = "#FAF6F0"
 SECONDARY_BACKGROUND_COLOR = "#FFFFFF"
 TEXT_COLOR = "#1A1A1A"
 
-# Paleta categórica usada nos gráficos (Testes por Projeto, Tipo de Teste,
-# Severidade, Responsáveis, Treemap, etc.). 8 matizes distintos, com a laranja
-# da marca na liderança (mantém a identidade visual nos gráficos de série
-# única) seguida de azul, água, amarelo, magenta, verde, violeta e vermelho -
-# ordem validada para diferenciação em daltonismo (protanopia/deuteranopia)
-# e leitura em visão normal, então NÃO reordene os slots livremente: a ordem
-# em si é o que garante que cores vizinhas no gráfico não fiquem parecidas.
-# Água, amarelo e magenta têm contraste mais baixo contra fundo branco -
-# por isso os gráficos de barra usam rótulos de valor visíveis (text_auto) e
-# sempre existe a tabela de dados detalhados como alternativa de leitura.
+# Paleta "de marca" original, com 8 matizes - hoje usada só como destaque
+# pontual (a linha de % acumulado do gráfico de Pareto, `PALETA_GRAFICOS[7]`
+# em `ui/pages/dashboard_page.py`). A coloração categoria-a-categoria de
+# TODOS os gráficos (barras, pizza, treemap etc.) usa a `PALETA_COLORIDA`
+# bem mais ampla logo abaixo - pedido explícito de ter o máximo de cores
+# possível em vez de um esquema restrito. Mantida por compatibilidade com
+# esse uso pontual; se não for mais referenciada em nenhum outro lugar,
+# pode ser removida no futuro.
 PALETA_GRAFICOS = [
     "#F15A24",  # laranja (marca)
     "#2a78d6",  # azul
@@ -56,46 +54,75 @@ PALETA_BUGS_TEMPO = {
     "Finalizado": "#2E7D5B",
 }
 
-# Extensão de PALETA_GRAFICOS com mais tons no mesmo estilo (cores vibrantes
-# de marca, mesma família visual) - usada só onde um gráfico precisa de mais
-# de 8 cores fixas por valor (hoje, só a Coluna do Board chega nisso: até 19
-# colunas oficiais em `core.analytics.ORDEM_COLUNAS_BOARD`, mais eventuais
-# colunas com nome próprio de algum time).
+# Paleta "arco-íris": bem mais ampla e variada que PALETA_GRAFICOS (8 tons),
+# usada como padrão em TODOS os gráficos categóricos do painel - pedido
+# explícito de ter o máximo de cores possível, bem coloridas, pra destacar
+# bem a diferença entre categorias, em vez de um esquema restrito/específico
+# (as tentativas anteriores - só 8 cores, depois uma extensão que começava
+# repetindo essas mesmas 8 - ficavam "sem graça"/pouco variadas pro gosto
+# pedido). 30 tons nitidamente diferentes entre si (inclusive tons "primos"
+# tratados como cores separadas de propósito, ex.: azul/azul claro/azul
+# marinho, laranja claro/laranja escuro, roxo/lilás/ameixa/violeta - dá pra
+# escolher entre eles porque o pedido foi por variedade, não por mínimo
+# necessário).
 #
-# Pediu-se que TODOS os gráficos usassem o mesmo esquema de cores do
-# "Distribuição de Status" - que não tem paleta própria, só usa
-# PALETA_GRAFICOS puro. Por isso os 8 primeiros tons daqui são EXATAMENTE os
-# de PALETA_GRAFICOS, na mesma ordem: com até 8 categorias, um gráfico
-# usando esta lista fica com as cores idênticas a qualquer gráfico "normal"
-# do painel. Os 16 tons extras (a partir da 9ª posição) só entram em jogo
-# quando realmente há mais de 8 categorias - existem pra continuar
-# resolvendo o problema original (cores repetindo a cada 8 colunas), sem
-# reintroduzir uma paleta visualmente "estranha"/fora do padrão do resto do
-# app (a tentativa anterior, baseada nas cores de Kenneth Kelly, tinha tons
-# terrosos/escuros que destoavam do visual vibrante do restante do painel).
-PALETA_GRAFICOS_ESTENDIDA = PALETA_GRAFICOS + [
-    "#00A99D",  # turquesa
+# IMPORTANTE sobre a ORDEM da lista (bug corrigido nesta versão): gráficos
+# com poucas categorias usam sempre as primeiras posições da lista, na
+# ordem em que aparecem aqui (Plotly colore por posição - 1ª categoria leva
+# a cor 0, 2ª leva a cor 1, etc.). Na primeira versão desta paleta as cores
+# estavam agrupadas por família (azul, azul claro e azul marinho uma atrás
+# da outra; depois verde, verde claro, verde escuro...) - então QUALQUER
+# gráfico com só 2 ou 3 categorias (ex.: "Passou vs. Não Passou") acabava
+# pegando 2-3 tons de azul entre si, todos parecidos, exatamente o problema
+# de "cores confusas" reportado. Agora as cores estão intercaladas: cada
+# posição vem de uma família de cor diferente da vizinha (azul, verde,
+# vermelho, amarelo, rosa, roxo, laranja, magenta...), e só depois de
+# passar por toda a variedade de famílias é que aparecem as variações
+# claras/escuras da mesma família - assim, não importa quantas categorias
+# o gráfico tiver (2, 3, 5, 10...), as cores usadas sempre vêm de famílias
+# bem diferentes entre si primeiro. Conferido programaticamente: com as 2 a
+# 8 primeiras cores da lista, a diferença mínima entre elas ainda é grande
+# (bem acima do que a primeira versão, agrupada por família, conseguia).
+# PALETA_GRAFICOS (8 cores) continua existindo só pelo uso pontual que já
+# tinha fora de "colorir categoria por categoria" (a linha de % acumulado
+# do gráfico de Pareto).
+PALETA_COLORIDA = [
+    "#2A78D6",  # azul
+    "#1DB954",  # verde
+    "#E63946",  # vermelho
+    "#F4C430",  # amarelo
+    "#E8578B",  # rosa
     "#8E44AD",  # roxo
-    "#B8860B",  # ouro escuro/mostarda
-    "#34667F",  # azul petróleo
-    "#C2185B",  # framboesa
-    "#7CB342",  # verde lima
-    "#5D4037",  # marrom
-    "#827717",  # oliva escuro
-    "#EC407A",  # rosa chiclete
-    "#5C6BC0",  # azul-violeta médio
-    "#BF5B04",  # terracota forte
-    "#1B5E20",  # verde floresta escuro
-    "#00B8D4",  # azul ciano vivo
-    "#880E4F",  # vinho/bordô
-    "#AFB42B",  # oliva claro
-    "#37474F",  # cinza-azulado neutro forte
+    "#F15A24",  # laranja
+    "#D6007F",  # magenta
+    "#00B8A9",  # turquesa
+    "#795548",  # marrom
+    "#607D8B",  # cinza azulado
+    "#5AC8FA",  # azul claro
+    "#8BC34A",  # verde claro
+    "#FF6F61",  # coral
+    "#C9A227",  # dourado
+    "#FF4FA3",  # rosa choque
+    "#5E3B9C",  # violeta
+    "#FFA552",  # laranja claro
+    "#006D77",  # azul petróleo
+    "#3A4750",  # cinza carvão
+    "#0B3D66",  # azul marinho
+    "#1B5E20",  # verde escuro
+    "#9C1D1D",  # vermelho escuro
+    "#FFE066",  # amarelo claro
+    "#B39DDB",  # lilás
+    "#C1440E",  # laranja escuro
+    "#17BECF",  # ciano
+    "#B2D732",  # verde lima
+    "#6A3B6E",  # ameixa
+    "#808000",  # verde oliva
 ]
 
 ROTULO_NAO_ATRIBUIDO_BOARD = "Não atribuído(a)"
 
 PALETA_COLUNA_BOARD: dict[str, str] = {
-    nome: PALETA_GRAFICOS_ESTENDIDA[indice % len(PALETA_GRAFICOS_ESTENDIDA)]
+    nome: PALETA_COLORIDA[indice % len(PALETA_COLORIDA)]
     for indice, nome in enumerate(ORDEM_COLUNAS_BOARD)
 }
 PALETA_COLUNA_BOARD[ROTULO_NAO_ATRIBUIDO_BOARD] = "#8C8C8C"
@@ -104,21 +131,20 @@ PALETA_COLUNA_BOARD[ROTULO_NAO_ATRIBUIDO_BOARD] = "#8C8C8C"
 def cor_discreta_coluna_board(valores_presentes) -> dict[str, str]:
     """
     Monta o `color_discrete_map` da Coluna do Board a partir da paleta fixa
-    acima (`PALETA_COLUNA_BOARD`, que começa com as mesmas cores de
-    PALETA_GRAFICOS), e completa - sem repetir nenhuma cor já usada -
-    qualquer valor que apareça nos dados mas não esteja na lista oficial
-    (coluna com nome próprio de algum time). Recebe os valores realmente
-    presentes no gráfico (não a lista oficial inteira) pra não gerar mapa
-    maior do que o necessário.
+    acima (`PALETA_COLUNA_BOARD`), e completa - sem repetir nenhuma cor já
+    usada - qualquer valor que apareça nos dados mas não esteja na lista
+    oficial (coluna com nome próprio de algum time). Recebe os valores
+    realmente presentes no gráfico (não a lista oficial inteira) pra não
+    gerar mapa maior do que o necessário.
     """
     mapa = dict(PALETA_COLUNA_BOARD)
-    cores_livres = [cor for cor in PALETA_GRAFICOS_ESTENDIDA if cor not in mapa.values()]
+    cores_livres = [cor for cor in PALETA_COLORIDA if cor not in mapa.values()]
     indice_extra = 0
     for valor in sorted(str(valor) for valor in valores_presentes if str(valor) not in mapa):
         if indice_extra < len(cores_livres):
             mapa[valor] = cores_livres[indice_extra]
         else:
-            mapa[valor] = PALETA_GRAFICOS_ESTENDIDA[indice_extra % len(PALETA_GRAFICOS_ESTENDIDA)]
+            mapa[valor] = PALETA_COLORIDA[indice_extra % len(PALETA_COLORIDA)]
         indice_extra += 1
     return mapa
 

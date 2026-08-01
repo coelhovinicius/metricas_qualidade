@@ -19,7 +19,7 @@ CHAVES_PADRAO = {
     "azure_projetos_disponiveis": [],  # list[Projeto] retornada pela API
     "azure_projeto_selecionado": None,  # nome do projeto escolhido
     "azure_area_paths_disponiveis": [],  # list[str]
-    "azure_area_path_selecionado": None,  # "" = nenhum escolhido (campo opcional)
+    "azure_area_paths_selecionados": [],  # list[str] - [] = nenhum escolhido (campo opcional, multiescolha)
     "azure_queries_disponiveis": [],  # list[ItemQuery]
     "azure_query_selecionada_id": None,
     # ---- Memória do último valor realmente usado em cada passo ----
@@ -33,7 +33,7 @@ CHAVES_PADRAO = {
     # manualmente todos os passos.
     "azure_ultima_organizacao_usada": None,
     "azure_ultimo_projeto_usado": None,
-    "azure_ultimo_area_path_usado": None,
+    "azure_ultimos_area_paths_usados": [],
     "azure_ultima_query_usada": None,
 }
 
@@ -74,6 +74,6 @@ def resetar_selecao_azure_devops(manter_organizacao: bool = False) -> None:
     st.session_state["azure_projetos_disponiveis"] = []
     st.session_state["azure_projeto_selecionado"] = None
     st.session_state["azure_area_paths_disponiveis"] = []
-    st.session_state["azure_area_path_selecionado"] = None
+    st.session_state["azure_area_paths_selecionados"] = []
     st.session_state["azure_queries_disponiveis"] = []
     st.session_state["azure_query_selecionada_id"] = None

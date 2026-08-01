@@ -133,8 +133,8 @@ def _renderizar_importacao_manual() -> None:
 def _renderizar_importacao_azure_devops() -> None:
     st.caption(
         "Busca work items direto da API do Azure DevOps, sem precisar baixar e subir o "
-        "CSV manualmente. Escolha a organização, o projeto e (se quiser) o Area Path, "
-        "depois selecione uma query já existente para trazer os dados."
+        "CSV manualmente. Escolha a organização, o projeto e (se quiser) um ou mais Area "
+        "Paths, depois selecione uma query já existente para trazer os dados."
     )
 
     # Mesmo cuidado do `origem_importacao` acima: o campo de PAT também é um
@@ -241,10 +241,10 @@ def _renderizar_importacao_azure_devops() -> None:
                     queries = listar_queries(organizacao_carregada, ultimo_projeto, pat)
                     st.session_state["azure_projeto_selecionado"] = ultimo_projeto
                     st.session_state["azure_area_paths_disponiveis"] = area_paths
-                    ultimo_area_path = st.session_state.get("azure_ultimo_area_path_usado")
-                    st.session_state["azure_area_path_selecionado"] = (
-                        ultimo_area_path if ultimo_area_path in area_paths else None
-                    )
+                    ultimos_area_paths = st.session_state.get("azure_ultimos_area_paths_usados", [])
+                    st.session_state["azure_area_paths_selecionados"] = [
+                        area_path for area_path in ultimos_area_paths if area_path in area_paths
+                    ]
                     st.session_state["azure_queries_disponiveis"] = queries
                     mapa_queries_restauro = {item.caminho: item.id for item in queries}
                     ultima_query = st.session_state.get("azure_ultima_query_usada")
@@ -273,7 +273,7 @@ def _renderizar_importacao_azure_devops() -> None:
                 st.session_state["azure_projeto_selecionado"] = projeto_escolhido
                 st.session_state["azure_ultimo_projeto_usado"] = projeto_escolhido
                 st.session_state["azure_area_paths_disponiveis"] = area_paths
-                st.session_state["azure_area_path_selecionado"] = None
+                st.session_state["azure_area_paths_selecionados"] = []
                 st.session_state["azure_queries_disponiveis"] = queries
                 st.session_state["azure_query_selecionada_id"] = None
                 st.session_state["erro_carga"] = None
@@ -289,34 +289,36 @@ def _renderizar_importacao_azure_devops() -> None:
     if not projeto_selecionado:
         return
 
-    # ---------------------------------------------------- Passo 3: Area Path (opcional)
+    # ------------------------------------------- Passo 3: Area Path(s) (opcional, múltipla escolha)
     area_paths_disponiveis = st.session_state.get("azure_area_paths_disponiveis", [])
-    opcoes_area_path = ["---"] + area_paths_disponiveis
-    area_path_atual = st.session_state.get("azure_area_path_selecionado") or "---"
-    indice_area_path = opcoes_area_path.index(area_path_atual) if area_path_atual in opcoes_area_path else 0
+    area_paths_atuais = [
+        area_path
+        for area_path in st.session_state.get("azure_area_paths_selecionados", [])
+        if area_path in area_paths_disponiveis
+    ]
 
-    area_path_escolhido = st.selectbox(
-        "Area Path do Board no Projeto (opcional)",
-        options=opcoes_area_path,
-        index=indice_area_path,
+    area_paths_escolhidos = st.multiselect(
+        "Area Path(s) do Board no Projeto (opcional)",
+        options=area_paths_disponiveis,
+        default=area_paths_atuais,
         # A chave inclui o projeto atual de propósito: o Streamlit, quando um
-        # combobox já tinha um valor selecionado, às vezes mantém esse texto
+        # widget já tinha valores selecionados, às vezes mantém esses valores
         # na tela mesmo depois de trocar as opções (aqui, ao trocar de
-        # projeto) e de recalcular o `index=` - forçar uma chave nova junto
-        # com a troca de projeto faz o Streamlit tratar como um combobox
-        # realmente novo, evitando esse valor "fantasma" da seleção antiga.
+        # projeto) - forçar uma chave nova junto com a troca de projeto faz o
+        # Streamlit tratar como um widget realmente novo, evitando seleção
+        # "fantasma" do projeto anterior.
         key=f"azure_area_path_input__{projeto_selecionado}",
+        help="Selecione um ou mais Area Paths para trazer work items de vários times/módulos de uma vez.",
     )
     st.caption(
-        "Campo opcional. Se você escolher um Area Path aqui, o app filtra os work items "
-        "trazidos pela query para manter só os que estão dentro dele (e dos seus "
-        "sub-caminhos). Se deixar em **---**, nenhum filtro extra de Area Path é aplicado "
+        "Campo opcional. Se você escolher um ou mais Area Paths aqui, o app filtra os work "
+        "items trazidos pela query para manter só os que estão dentro de algum deles (e dos "
+        "seus sub-caminhos). Se deixar em branco, nenhum filtro extra de Area Path é aplicado "
         "— vale o que a própria query já retorna."
     )
-    novo_area_path = None if area_path_escolhido == "---" else area_path_escolhido
-    st.session_state["azure_area_path_selecionado"] = novo_area_path
-    if novo_area_path:
-        st.session_state["azure_ultimo_area_path_usado"] = novo_area_path
+    st.session_state["azure_area_paths_selecionados"] = area_paths_escolhidos
+    if area_paths_escolhidos:
+        st.session_state["azure_ultimos_area_paths_usados"] = area_paths_escolhidos
 
     # ---------------------------------------------- Passo 4: Query existente (obrigatório p/ buscar)
     queries_disponiveis = st.session_state.get("azure_queries_disponiveis", [])
@@ -411,15 +413,22 @@ def _renderizar_importacao_azure_devops() -> None:
                     organizacao_carregada, projeto_selecionado, query_id, pat
                 )
 
-                area_path_filtro = st.session_state.get("azure_area_path_selecionado")
-                if area_path_filtro and "Area Path" in dataframe.columns:
+                area_paths_filtro = st.session_state.get("azure_area_paths_selecionados") or []
+                if area_paths_filtro and "Area Path" in dataframe.columns:
+                    # Mantém a linha se o Area Path do item começar com QUALQUER um dos
+                    # Area Paths escolhidos (ou for um sub-caminho de algum deles) - é a
+                    # mesma lógica de "OR entre os selecionados" do multiselect de Projeto/
+                    # Tipos de Teste/Status no dashboard.
+                    valores_area_path = dataframe["Area Path"].astype(str)
                     dataframe = dataframe[
-                        dataframe["Area Path"].astype(str).str.startswith(area_path_filtro, na=False)
+                        valores_area_path.apply(
+                            lambda valor: any(valor.startswith(area_path) for area_path in area_paths_filtro)
+                        )
                     ]
 
                 if dataframe.empty:
                     raise AzureDevOpsError(
-                        "A query escolhida (após o filtro de Area Path, se algum foi "
+                        "A query escolhida (após o filtro de Area Path(s), se algum foi "
                         "escolhido) não retornou nenhum work item."
                     )
 
