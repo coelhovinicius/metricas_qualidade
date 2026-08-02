@@ -18,10 +18,13 @@ só o que já está visível por padrão.
 Cada gráfico Plotly é rasterizado como PNG via `kaleido` (ver comentário em
 requirements.txt sobre a versão usada - precisou ser >=1.0 por causa de um
 bug do kaleido 0.2.1 no Windows com espaço no caminho do projeto) e o
-documento em si é montado com `reportlab`. O kaleido>=1.0 primeiro tenta
-usar um Chrome/Edge/Brave já instalado no sistema (a maioria das máquinas
-já tem algum) e só baixa um "Chrome for Testing" próprio (uma vez só, com
-acesso à internet) se não achar nenhum - ver `_rasterizar_com_fallback_de_chrome`.
+documento em si é montado com `reportlab`. O kaleido>=1.0 procura um
+Chrome/Chromium/Edge/Brave já instalado no sistema e só baixa um "Chrome
+for Testing" próprio (uma vez só, com acesso à internet) se não achar
+nenhum - ver `_rasterizar_com_fallback_de_chrome`. No Streamlit Community
+Cloud, o pacote `chromium` do `packages.txt` (raiz do projeto) garante que
+sempre existe um navegador do sistema pronto pra uso - ver comentário
+detalhado logo acima de `_chrome_download_ok`, abaixo.
 """
 
 from __future__ import annotations
@@ -68,17 +71,31 @@ class ErroGeracaoPdf(Exception):
     """
 
 
-# kaleido>=1.0 já procura sozinho, na ordem: (1) um Chrome/Chromium/Edge/
-# Brave já instalado no sistema (via PATH, ou registro do Windows), (2) um
-# "Chrome for Testing" baixado anteriormente por ele mesmo. Só quando NENHum
-# dos dois existe é que vale a pena baixar um (~100MB, só na primeira vez) -
-# por isso a estratégia abaixo é "tenta renderizar primeiro" (rápido, e
-# funciona de cara pra quem já tem algum desses navegadores instalado) e só
-# aciona o download como recuperação de um erro real. `_chrome_download_ok`/
+# kaleido>=1.0 já procura sozinho, na ordem: (1) um "Chrome for Testing"
+# baixado anteriormente por ele mesmo (se já existir no disco), (2) um
+# Chrome/Chromium/Edge/Brave já instalado no sistema (via PATH, registro do
+# Windows, ou caminhos típicos tipo /usr/bin/chromium no Linux). Só quando
+# NENHUM dos dois existe é que vale a pena baixar um (~100MB, só na primeira
+# vez) - por isso a estratégia abaixo é "tenta renderizar primeiro" (rápido,
+# e funciona de cara pra quem já tem algum desses navegadores instalado) e
+# só aciona o download como recuperação de um erro real. `_chrome_download_ok`/
 # `_mensagem_erro_chrome` evitam repetir uma tentativa de download que já
 # falhou uma vez pra cada gráfico seguinte do mesmo PDF (senão, um problema
 # de rede faria o app tentar baixar de novo - e demorar de novo - pra cada
 # um dos ~15 gráficos do relatório, em vez de falhar rápido depois da 1ª vez).
+#
+# No Streamlit Community Cloud, o container é minimalista: não tem NENHUM
+# Chrome/Chromium instalado, então cai sempre no caso (2) - baixa um "Chrome
+# for Testing" próprio. Só que esse binário baixado também precisa de
+# bibliotecas do sistema (libnss3, libgtk-3-0, libasound2 etc.) pra
+# CONSEGUIR ABRIR, e o container não tem elas por padrão - o download
+# funciona, mas o navegador baixado "fecha sozinho ao iniciar"
+# (erro "The browser seemed to close immediately after starting"). Por
+# isso existe o `packages.txt` na raiz do projeto, com a linha `chromium`:
+# ele manda o Streamlit Community Cloud instalar o Chromium do sistema via
+# apt ANTES do app rodar, o que já traz essas bibliotecas junto (como
+# dependência do pacote) - suficiente pra qualquer Chrome/Chromium (inclusive
+# um "Chrome for Testing" já baixado antes) conseguir abrir.
 _chrome_download_ok = False
 _mensagem_erro_chrome: Optional[str] = None
 

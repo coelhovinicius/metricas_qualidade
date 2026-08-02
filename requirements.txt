@@ -14,10 +14,16 @@ requests>=2.31
 # https://github.com/plotly/Kaleido/issues (Popen com shell=True no Windows
 # quebra o path com espaço). kaleido>=1.0 reescreveu essa parte (usa
 # choreographer, sem shell=True) e não tem esse problema. Em troca, não vem
-# mais com um navegador embutido: baixa um "Chrome for Testing" próprio na
-# primeira vez que gera uma imagem (chamada explícita em
-# core/pdf_report.py), e reaproveita esse download depois - tanto localmente
-# quanto no Streamlit Community Cloud (não precisa de packages.txt/Chrome do
-# sistema, só de acesso à internet na primeira geração de PDF).
+# mais com um navegador embutido: se não achar um Chrome/Chromium/Edge/Brave
+# já instalado no sistema, baixa um "Chrome for Testing" próprio na primeira
+# vez que gera uma imagem (chamada explícita em core/pdf_report.py) e
+# reaproveita esse download depois. No Streamlit Community Cloud, esse
+# "Chrome for Testing" baixado sozinho falha ao abrir porque o container é
+# minimalista e não tem as bibliotecas do sistema (libnss3, libgtk-3-0,
+# libasound2 etc.) que QUALQUER Chrome/Chromium precisa pra rodar - por isso
+# o arquivo packages.txt (raiz do projeto) instala o pacote "chromium" via
+# apt: ele já traz essas bibliotecas junto (como dependência), e o
+# kaleido passa a achar e usar esse chromium do sistema direto, sem
+# precisar baixar nada.
 kaleido>=1.0
 reportlab>=4.0
