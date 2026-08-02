@@ -6,3 +6,18 @@ plotly>=5.22
 chardet>=5.2
 PyYAML>=6.0
 requests>=2.31
+# kaleido: rasteriza os gráficos Plotly como imagem pro relatório em PDF
+# (core/pdf_report.py). A versão 0.2.1 (usada numa primeira versão deste
+# recurso) tem um bug conhecido no Windows: quando o caminho do projeto tem
+# espaço (ex.: "Vinicius Bemfica", "Métricas QA"), o subprocesso interno do
+# kaleido falha com "--plotlyjs argument is not a valid URL or file path" -
+# https://github.com/plotly/Kaleido/issues (Popen com shell=True no Windows
+# quebra o path com espaço). kaleido>=1.0 reescreveu essa parte (usa
+# choreographer, sem shell=True) e não tem esse problema. Em troca, não vem
+# mais com um navegador embutido: baixa um "Chrome for Testing" próprio na
+# primeira vez que gera uma imagem (chamada explícita em
+# core/pdf_report.py), e reaproveita esse download depois - tanto localmente
+# quanto no Streamlit Community Cloud (não precisa de packages.txt/Chrome do
+# sistema, só de acesso à internet na primeira geração de PDF).
+kaleido>=1.0
+reportlab>=4.0

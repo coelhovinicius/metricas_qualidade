@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 import pandas as pd
@@ -16,6 +17,9 @@ from ui.components import action_button, finish_action, loading_overlay, render_
 from ui.theme import PALETA_BUGS_TEMPO, PALETA_COLORIDA, PALETA_GRAFICOS, PALETA_STATUS, cor_discreta_coluna_board
 
 TIPOS_GRAFICO_PADRAO = ["Barras", "Barras Horizontais", "Pizza", "Rosca", "Linha", "Área", "Treemap", "Pareto", "Radar (Preenchido)"]
+
+# ui/pages/dashboard_page.py -> ui/pages -> ui -> raiz do projeto -> assets/
+_ASSETS_DIR = Path(__file__).resolve().parent.parent.parent / "assets"
 
 
 def _colunas_disponiveis_para_grafico(
@@ -166,16 +170,21 @@ def _construir_grafico_pareto(df: pd.DataFrame, x: str, y: str) -> go.Figure:
     return fig
 
 
-def _plotar(
+def _construir_figura(
     df: pd.DataFrame,
     tipo: str,
     x: str,
     y: str,
-    chave: str,
     cor: Optional[str] = None,
     ordem_categorias: Optional[dict[str, list[str]]] = None,
-) -> None:
+) -> go.Figure:
     """
+    Monta a `Figure` do Plotly (sem desenhar nada na tela) - separado de
+    `_plotar` de propósito, pra que o mesmo gráfico possa ser tanto
+    desenhado no dashboard (`st.plotly_chart`) quanto reaproveitado como
+    imagem no relatório em PDF (ver `core/pdf_report.py`), sem duplicar
+    nenhuma lógica de construção.
+
     `ordem_categorias` (opcional): dict eixo/coluna -> lista com a ordem
     desejada das categorias (ex.: {"Coluna do Board": analytics.ORDEM_COLUNAS_BOARD}),
     repassado direto pro `category_orders` do Plotly Express - sem isso, a
@@ -309,6 +318,31 @@ def _plotar(
         polar_bgcolor="rgba(0,0,0,0)",
         font_family="Poppins, sans-serif",
     )
+    return fig
+
+
+def _plotar(
+    df: pd.DataFrame,
+    tipo: str,
+    x: str,
+    y: str,
+    chave: str,
+    cor: Optional[str] = None,
+    ordem_categorias: Optional[dict[str, list[str]]] = None,
+    titulo: Optional[str] = None,
+    secoes_pdf: Optional[list[dict]] = None,
+) -> None:
+    """
+    Desenha o gráfico na tela (`st.plotly_chart`). `titulo`/`secoes_pdf` são
+    opcionais: quando `secoes_pdf` é passado (lista mutável mantida por
+    `render_dashboard_page`), a MESMA `Figure` desenhada aqui é anexada a
+    ela com o rótulo `titulo` - é o que o relatório em PDF (botão "Gerar PDF
+    do relatório", ao final do dashboard) usa pra montar o PDF, sem
+    recalcular nem redesenhar nada: o PDF reaproveita exatamente o gráfico
+    que acabou de ser desenhado na tela, na mesma ordem em que as seções do
+    dashboard chamam esta função.
+    """
+    fig = _construir_figura(df, tipo, x, y, cor=cor, ordem_categorias=ordem_categorias)
     st.plotly_chart(fig, use_container_width=True, key=f"chart_{chave}")
 
     if tipo == "Radar (Preenchido)" and cor is None:
@@ -317,6 +351,9 @@ def _plotar(
             "Responsáveis, etc. lado a lado), use o **construtor de gráfico personalizado** "
             "mais abaixo e escolha uma coluna em \"Agrupar por\"."
         )
+
+    if secoes_pdf is not None:
+        secoes_pdf.append({"titulo": titulo or chave, "fig": fig})
 
 
 def render_dashboard_page() -> None:
@@ -344,27 +381,33 @@ def render_dashboard_page() -> None:
 
     status_binario = analytics.status_e_binario(df_filtrado)
 
+    # Lista mutável que vai sendo preenchida por `_plotar`/`_renderizar_construtor_grafico_personalizado`
+    # conforme cada seção é desenhada abaixo - usada só pelo botão "Gerar PDF
+    # do relatório" ao final da página (ver `core/pdf_report.py`).
+    secoes_pdf: list[dict] = []
+
     # ---------------------------------------------------------------- KPIs
     if status_binario:
         indicadores = analytics.calcular_indicadores_gerais(df_filtrado)
         taxa_texto = f"{indicadores.taxa_sucesso}%" if indicadores.taxa_sucesso is not None else "—"
-        render_kpi_row([
+        cartoes_kpi = [
             ("Volumetria de Testes", f"{indicadores.total_registros:,}".replace(",", "."), None, True),
             ("Passaram", f"{indicadores.total_passou:,}".replace(",", "."), None, True),
             ("Não Passaram", f"{indicadores.total_falhou:,}".replace(",", "."), None, False),
             ("Taxa de Sucesso", taxa_texto, None, True),
-        ])
+        ]
     else:
         total = len(df_filtrado)
         distribuicao = analytics.distribuicao_status_bruto(df_filtrado, mapeamento)
         status_top = distribuicao.iloc[0]["Status"] if distribuicao is not None and not distribuicao.empty else "—"
         qtd_top = int(distribuicao.iloc[0]["Quantidade"]) if distribuicao is not None and not distribuicao.empty else 0
         qtd_status_distintos = distribuicao["Status"].nunique() if distribuicao is not None else 0
-        render_kpi_row([
+        cartoes_kpi = [
             ("Volumetria de Testes", f"{total:,}".replace(",", "."), None, True),
             ("Status Mais Frequente", str(status_top), f"{qtd_top} registros", True),
             ("Status Distintos", str(qtd_status_distintos), None, True),
-        ])
+        ]
+    render_kpi_row(cartoes_kpi)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -390,7 +433,11 @@ def render_dashboard_page() -> None:
             resumo_status.columns = ["Status", "Quantidade"]
         else:
             resumo_status = analytics.distribuicao_status_bruto(df_filtrado, mapeamento)
-        _plotar(resumo_status, tipo_status, x="Status", y="Quantidade", chave="status_geral")
+        _plotar(
+            resumo_status, tipo_status, x="Status", y="Quantidade", chave="status_geral",
+            titulo="Distribuição de Status" if not status_binario else "Passou vs. Não Passou",
+            secoes_pdf=secoes_pdf,
+        )
         st.divider()
 
     # ------------------------------------------------- Area Path × Status
@@ -407,7 +454,10 @@ def render_dashboard_page() -> None:
             col_area_status, _col_espaco_area_status = st.columns([1, 3])
             with col_area_status:
                 tipo_area_status = _selecionar_tipo_grafico("area_path_status", ["Barras", "Barras Horizontais", "Treemap"])
-            _plotar(df_area_x_status, tipo_area_status, x="Projeto", y="Quantidade", chave="area_path_status", cor="Status")
+            _plotar(
+                df_area_x_status, tipo_area_status, x="Projeto", y="Quantidade", chave="area_path_status", cor="Status",
+                titulo="Area Path × Status", secoes_pdf=secoes_pdf,
+            )
             st.divider()
 
     # ------------------------------------------------- Backlog aberto (idade)
@@ -442,7 +492,10 @@ def render_dashboard_page() -> None:
         col_tipo, _col_espaco = st.columns([1, 3])
         with col_tipo:
             tipo_planejamento = _selecionar_tipo_grafico("planejamento", ["Barras", "Pizza", "Rosca"])
-        _plotar(df_planejamento, tipo_planejamento, x="Categoria", y="Quantidade", chave="planejamento")
+        _plotar(
+            df_planejamento, tipo_planejamento, x="Categoria", y="Quantidade", chave="planejamento",
+            titulo="Planejamento vs. Testes Efetivados", secoes_pdf=secoes_pdf,
+        )
         st.divider()
 
     # ------------------------------------------------------ Testes por projeto
@@ -452,7 +505,10 @@ def render_dashboard_page() -> None:
         col_tipo, _col_espaco = st.columns([1, 3])
         with col_tipo:
             tipo_projeto = _selecionar_tipo_grafico("testes_projeto")
-        _plotar(df_projeto, tipo_projeto, x="Projeto", y="Quantidade de Testes", chave="testes_projeto")
+        _plotar(
+            df_projeto, tipo_projeto, x="Projeto", y="Quantidade de Testes", chave="testes_projeto",
+            titulo="Testes por Projeto", secoes_pdf=secoes_pdf,
+        )
         st.divider()
 
     # ------------------------------------------------- Ranking de bugs
@@ -462,7 +518,10 @@ def render_dashboard_page() -> None:
         col_tipo, _col_espaco = st.columns([1, 3])
         with col_tipo:
             tipo_bugs = _selecionar_tipo_grafico("bugs_projeto")
-        _plotar(df_bugs, tipo_bugs, x="Projeto", y="Quantidade de Bugs", chave="bugs_projeto")
+        _plotar(
+            df_bugs, tipo_bugs, x="Projeto", y="Quantidade de Bugs", chave="bugs_projeto",
+            titulo="Ranking de Bugs por Projeto", secoes_pdf=secoes_pdf,
+        )
         st.divider()
 
     # ------------------------------------------------- Distribuição por Tipo de Teste
@@ -505,7 +564,10 @@ def render_dashboard_page() -> None:
             col_tipo, _col_espaco = st.columns([1, 3])
             with col_tipo:
                 tipo_tt = _selecionar_tipo_grafico("tipo_teste", ["Treemap", "Barras", "Pizza", "Rosca", "Barras Horizontais", "Pareto", "Radar (Preenchido)"])
-            _plotar(df_tipo_teste, tipo_tt, x="Tipo de Teste", y="Quantidade", chave="tipo_teste")
+            _plotar(
+                df_tipo_teste, tipo_tt, x="Tipo de Teste", y="Quantidade", chave="tipo_teste",
+                titulo="Distribuição por Tipo de Teste", secoes_pdf=secoes_pdf,
+            )
         else:
             st.info("Nenhum tipo restante depois da exclusão acima — ajuste a lista para ver o gráfico.")
         st.divider()
@@ -514,7 +576,10 @@ def render_dashboard_page() -> None:
     df_taxa_projeto = analytics.taxa_sucesso_por_projeto(df_filtrado, mapeamento)
     if df_taxa_projeto is not None and not df_taxa_projeto.empty:
         st.markdown("**Taxa de Sucesso por Projeto**")
-        _plotar(df_taxa_projeto, "Barras", x="Projeto", y="Taxa de Sucesso (%)", chave="taxa_projeto")
+        _plotar(
+            df_taxa_projeto, "Barras", x="Projeto", y="Taxa de Sucesso (%)", chave="taxa_projeto",
+            titulo="Taxa de Sucesso por Projeto", secoes_pdf=secoes_pdf,
+        )
         st.divider()
 
     # ------------------------------------------------- Tendência temporal
@@ -522,7 +587,8 @@ def render_dashboard_page() -> None:
     if df_tendencia is not None:
         st.markdown("**Tendência ao Longo do Tempo**")
         _plotar(df_tendencia, "Linha", x="Semana", y="Quantidade", chave="tendencia",
-                cor="Status" if "Status" in df_tendencia.columns else None)
+                cor="Status" if "Status" in df_tendencia.columns else None,
+                titulo="Tendência ao Longo do Tempo", secoes_pdf=secoes_pdf)
         st.divider()
 
     # ------------------------------------------------- Bugs abertos vs. solucionados
@@ -586,14 +652,18 @@ def render_dashboard_page() -> None:
             value_name="Quantidade",
         )
         _plotar(df_bugs_tempo_longo, tipo_bugs_tempo, x="Semana", y="Quantidade",
-                chave="bugs_tempo", cor="Categoria")
+                chave="bugs_tempo", cor="Categoria",
+                titulo="Bugs Abertos vs. Solucionados", secoes_pdf=secoes_pdf)
         st.divider()
 
     # ------------------------------------------------- Distribuição de severidade
     df_severidade = analytics.distribuicao_severidade(df_filtrado, mapeamento)
     if df_severidade is not None and not df_severidade.empty:
         st.markdown("**Distribuição por Severidade/Prioridade**")
-        _plotar(df_severidade, "Pizza", x="Severidade", y="Quantidade", chave="severidade")
+        _plotar(
+            df_severidade, "Pizza", x="Severidade", y="Quantidade", chave="severidade",
+            titulo="Distribuição por Severidade/Prioridade", secoes_pdf=secoes_pdf,
+        )
         st.divider()
 
     # ------------------------------------------------- Distribuição por Coluna do Board
@@ -652,6 +722,7 @@ def render_dashboard_page() -> None:
             _plotar(
                 df_coluna_board, tipo_board, x="Coluna do Board", y="Quantidade", chave="coluna_board",
                 ordem_categorias={"Coluna do Board": analytics.ORDEM_COLUNAS_BOARD},
+                titulo="Distribuição por Coluna do Board (Kanban)", secoes_pdf=secoes_pdf,
             )
         else:
             st.info('Nenhum item com Coluna do Board (fora de "Não atribuído(a)") para os filtros atuais.')
@@ -680,6 +751,7 @@ def render_dashboard_page() -> None:
                 df_area_x_board, tipo_area_board, x="Projeto", y="Quantidade",
                 chave="area_path_coluna_board", cor="Coluna do Board",
                 ordem_categorias={"Coluna do Board": analytics.ORDEM_COLUNAS_BOARD},
+                titulo="Area Path × Coluna do Board", secoes_pdf=secoes_pdf,
             )
             st.divider()
 
@@ -713,6 +785,7 @@ def render_dashboard_page() -> None:
                 df_volume_responsavel, tipo_volume_responsavel, x="Responsável", y="Quantidade",
                 chave="volume_responsavel",
                 cor="Projeto" if "Projeto" in df_volume_responsavel.columns else None,
+                titulo="Volume de Testes por Responsável", secoes_pdf=secoes_pdf,
             )
         else:
             st.info("Sem dados suficientes de Responsável para montar este gráfico.")
@@ -735,6 +808,7 @@ def render_dashboard_page() -> None:
         _plotar(
             df_volume_tempo, tipo_volume_tempo, x="Semana", y="Quantidade",
             chave="volume_responsavel_tempo", cor="Responsável",
+            titulo="Volume por Responsável ao Longo do Tempo", secoes_pdf=secoes_pdf,
         )
         if volume_tempo_truncado:
             st.caption(
@@ -744,7 +818,7 @@ def render_dashboard_page() -> None:
         st.divider()
 
     # ------------------------------------------------- Construtor de gráfico personalizado
-    _renderizar_construtor_grafico_personalizado(df_filtrado, mapeamento)
+    _renderizar_construtor_grafico_personalizado(df_filtrado, mapeamento, secoes_pdf=secoes_pdf)
 
     # ------------------------------------------------------------- Tabela
     with st.expander("Ver dados detalhados (filtrados)"):
@@ -757,8 +831,97 @@ def render_dashboard_page() -> None:
             mime="text/csv",
         )
 
+    # ------------------------------------------------- Relatório completo em PDF
+    st.divider()
+    st.markdown("### Relatório completo em PDF")
+    st.caption(
+        "Gera um PDF com os KPIs e TODOS os gráficos acima, exatamente como estão na tela "
+        "agora (mesmos filtros de Período/Projeto/Tipos de Teste/Status aplicados na barra "
+        "lateral, e o mesmo tipo de gráfico escolhido em cada seção — inclusive o gráfico "
+        "personalizado, se você já tiver gerado um). Não inclui conteúdo que esteja dentro de "
+        "um expansor recolhido (ex.: a tabela de dados detalhados acima) — só o que já está "
+        "visível por padrão. Se mudar algum filtro depois de gerar, clique de novo para "
+        "atualizar o PDF. Pode levar até um minuto (cada gráfico é desenhado um a um) - "
+        "**na primeira vez** pode demorar ainda mais, se o app precisar baixar sozinho um "
+        "navegador dedicado só pra essa etapa (algo que só acontece se nenhum navegador "
+        "compatível já estiver instalado na máquina)."
+    )
+    gerar_pdf = action_button("📄 Gerar PDF do relatório", key="btn_gerar_pdf_relatorio")
+    if gerar_pdf:
+        # Import local (não no topo do arquivo): evita carregar reportlab/kaleido
+        # toda vez que a página do dashboard é aberta, mesmo por quem nunca
+        # clica em "Gerar PDF do relatório".
+        from core.pdf_report import ErroGeracaoPdf, gerar_pdf_relatorio
 
-def _renderizar_construtor_grafico_personalizado(df: pd.DataFrame, mapeamento: MapeamentoColunas) -> None:
+        try:
+            with loading_overlay("Montando o PDF, aguarde... (a 1ª vez pode demorar mais)"):
+                resultado_carga = st.session_state.get("resultado_carga")
+                nome_origem = resultado_carga.nome_arquivo if resultado_carga else "arquivo importado"
+                logo_path = _ASSETS_DIR / "logo_refuturiza.png"
+                pdf_bytes = gerar_pdf_relatorio(
+                    secoes=secoes_pdf,
+                    kpis=cartoes_kpi,
+                    nome_arquivo_origem=nome_origem,
+                    total_registros=len(df_filtrado),
+                    resumo_filtros=_montar_resumo_filtros_ativos(),
+                    logo_bytes=logo_path.read_bytes() if logo_path.exists() else None,
+                )
+                st.session_state["pdf_relatorio_bytes"] = pdf_bytes
+                st.session_state["pdf_relatorio_nome"] = (
+                    f"relatorio_qa_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
+                )
+        except ErroGeracaoPdf as erro:
+            # Erro "amigável" - mensagem já pronta pra exibir direto, sem
+            # deixar o traceback cru do kaleido/reportlab estourar a página
+            # inteira (ver core/pdf_report.py).
+            st.session_state["pdf_relatorio_erro"] = str(erro)
+            st.session_state.pop("pdf_relatorio_bytes", None)
+        else:
+            st.session_state.pop("pdf_relatorio_erro", None)
+        finish_action("btn_gerar_pdf_relatorio")
+        st.rerun()
+
+    if st.session_state.get("pdf_relatorio_erro"):
+        st.error(st.session_state["pdf_relatorio_erro"])
+
+    if st.session_state.get("pdf_relatorio_bytes"):
+        st.download_button(
+            "⬇️ Baixar PDF gerado",
+            data=st.session_state["pdf_relatorio_bytes"],
+            file_name=st.session_state.get("pdf_relatorio_nome", "relatorio_qa.pdf"),
+            mime="application/pdf",
+        )
+
+
+def _montar_resumo_filtros_ativos() -> list[str]:
+    """
+    Descreve, em texto simples, os filtros aplicados no momento (mesmas
+    chaves de `st.session_state` lidas em `_aplicar_filtros_sidebar`) - usado
+    só no cabeçalho do relatório em PDF, pra deixar claro com quais filtros
+    aquele PDF foi gerado.
+    """
+    linhas = []
+    data_inicio = st.session_state.get("filtro_data_inicio")
+    data_fim = st.session_state.get("filtro_data_fim")
+    if data_inicio and data_fim:
+        linhas.append(f"Período: {data_inicio.strftime('%d/%m/%Y')} a {data_fim.strftime('%d/%m/%Y')}")
+
+    for chave_estado, rotulo in (
+        ("filtro_projeto", "Projeto"),
+        ("filtro_tipo_teste", "Tipos de Teste"),
+        ("filtro_status", "Status"),
+    ):
+        selecionados = st.session_state.get(chave_estado)
+        if selecionados:
+            texto = ", ".join(selecionados) if len(selecionados) <= 6 else f"{len(selecionados)} selecionados"
+            linhas.append(f"{rotulo}: {texto}")
+
+    return linhas
+
+
+def _renderizar_construtor_grafico_personalizado(
+    df: pd.DataFrame, mapeamento: MapeamentoColunas, secoes_pdf: Optional[list[dict]] = None
+) -> None:
     st.markdown("### Monte seu gráfico personalizado")
     st.caption(
         "Escolha quais colunas devem compor o gráfico — inclui campos já mapeados, campos "
@@ -868,4 +1031,6 @@ def _renderizar_construtor_grafico_personalizado(df: pd.DataFrame, mapeamento: M
                     y="Valor",
                     chave="grafico_customizado",
                     cor="Grupo" if parametros_salvos.get("coluna_grupo") else None,
+                    titulo=f"Gráfico Personalizado — {parametros_salvos['rotulo_x']}",
+                    secoes_pdf=secoes_pdf,
                 )
