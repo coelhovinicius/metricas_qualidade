@@ -138,6 +138,21 @@ def ordem_coluna_board(valor: object) -> tuple[int, str]:
     return (len(ORDEM_COLUNAS_BOARD), texto)
 
 
+def _valor_esta_vazio(valor: object) -> bool:
+    """
+    True para nulos "de verdade" (NaN/None/NaT) e para variações textuais de
+    "vazio" (ex.: célula em branco que alguma etapa anterior tenha
+    convertido para a string "nan"). Usado tanto para decidir se um valor
+    deve ganhar o rótulo "Não atribuído(a)" quanto para decidir se o
+    Responsável deve cair no fallback de Criado por (ver `preparar_dados`).
+    """
+    if pd.isna(valor):
+        return True
+    if isinstance(valor, str) and valor.strip().lower() in _VALORES_CONSIDERADOS_VAZIOS:
+        return True
+    return False
+
+
 def _rotular_valores_vazios(serie: pd.Series, rotulo: str = ROTULO_VAZIO_PADRAO) -> pd.Series:
     """
     Substitui nulos (e variações textuais de "vazio", ex.: célula em branco
@@ -146,11 +161,7 @@ def _rotular_valores_vazios(serie: pd.Series, rotulo: str = ROTULO_VAZIO_PADRAO)
     """
 
     def _rotular(valor: object) -> object:
-        if pd.isna(valor):
-            return rotulo
-        if isinstance(valor, str) and valor.strip().lower() in _VALORES_CONSIDERADOS_VAZIOS:
-            return rotulo
-        return valor
+        return rotulo if _valor_esta_vazio(valor) else valor
 
     return serie.apply(_rotular)
 
@@ -159,6 +170,10 @@ def preparar_dados(df: pd.DataFrame, mapeamento: MapeamentoColunas) -> pd.DataFr
     """
     Aplica as limpezas necessárias antes de calcular qualquer indicador:
         - Extrai apenas o nome da coluna de responsável (remove "<email>");
+        - Quando o Responsável vier vazio e a coluna Criado por/Created By
+          estiver mapeada, usa quem criou o item como reserva do
+          Responsável (só nesse caso - nunca sobrescreve um Responsável já
+          preenchido);
         - Simplifica a coluna de projeto quando ela vem de uma hierarquia de
           Area Path ou de uma coluna com múltiplos valores (ex.: Tags usada
           como aproximação de projeto);
@@ -178,6 +193,20 @@ def preparar_dados(df: pd.DataFrame, mapeamento: MapeamentoColunas) -> pd.DataFr
 
     if mapeamento.responsavel and mapeamento.responsavel in df.columns:
         df[mapeamento.responsavel] = df[mapeamento.responsavel].apply(extrair_nome_de_email)
+
+        # Reserva: quando o Responsável (Assigned To) vier vazio, usa quem
+        # abriu o item (Criado por / Created By) no lugar - só nesse caso.
+        # Itens que já têm um Responsável de verdade NUNCA são sobrescritos
+        # pelo Criado por, mesmo que sejam pessoas diferentes. Se o Criado
+        # por também estiver mapeado mas vazio (ou não estiver mapeado), o
+        # item continua sem responsável e cai no rótulo padrão
+        # "Não atribuído(a)" mais abaixo, exatamente como antes.
+        if mapeamento.criado_por and mapeamento.criado_por in df.columns:
+            valores_criado_por = df[mapeamento.criado_por].apply(extrair_nome_de_email)
+            mascara_responsavel_vazio = df[mapeamento.responsavel].apply(_valor_esta_vazio)
+            df.loc[mascara_responsavel_vazio, mapeamento.responsavel] = valores_criado_por[
+                mascara_responsavel_vazio
+            ]
 
     if mapeamento.projeto and mapeamento.projeto in df.columns:
         df[mapeamento.projeto] = df[mapeamento.projeto].apply(simplificar_valor_projeto)

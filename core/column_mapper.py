@@ -6,8 +6,9 @@ usa correspondência por palavras-chave (com normalização de acentos/caixa)
 para tentar identificar automaticamente quais colunas representam:
 
     projeto, status, data planejada, data de execução, data de criação,
-    tipo de teste (Bug/Test Case/etc.), responsável/executor, identificador
-    do caso de teste e severidade/prioridade.
+    tipo de teste (Bug/Test Case/etc.), responsável/executor, autor/criado por
+    (usado como reserva do responsável, ver `core.analytics.preparar_dados`),
+    identificador do caso de teste e severidade/prioridade.
 
 O resultado é um mapeamento sugerido (`MapeamentoColunas`) que a interface
 exibe ao usuário para confirmação/ajuste antes de gerar os indicadores -
@@ -74,6 +75,7 @@ PALAVRAS_CHAVE: dict[str, list[str]] = {
         "tipo",
     ],
     "responsavel": ["responsavel", "executor", "tester", "analista", "assigned to", "atribuido"],
+    "criado_por": ["created by", "criado por", "autor", "aberto por", "solicitante"],
     "caso_teste": ["caso de teste", "id teste", "test case", "cenario", "caso teste", "id caso", "id"],
     "severidade": ["severidade", "prioridade", "criticidade", "severity", "priority"],
     "coluna_board": [
@@ -176,6 +178,7 @@ class MapeamentoColunas:
     data_criacao: Optional[str] = None
     tipo_teste: Optional[str] = None
     responsavel: Optional[str] = None
+    criado_por: Optional[str] = None
     caso_teste: Optional[str] = None
     severidade: Optional[str] = None
     coluna_board: Optional[str] = None
@@ -191,6 +194,7 @@ class MapeamentoColunas:
             "data_criacao": self.data_criacao,
             "tipo_teste": self.tipo_teste,
             "responsavel": self.responsavel,
+            "criado_por": self.criado_por,
             "caso_teste": self.caso_teste,
             "severidade": self.severidade,
             "coluna_board": self.coluna_board,
@@ -215,6 +219,7 @@ def detectar_mapeamento(df: pd.DataFrame) -> MapeamentoColunas:
         "data_criacao",
         "tipo_teste",
         "responsavel",
+        "criado_por",
         "caso_teste",
         "severidade",
         "coluna_board",

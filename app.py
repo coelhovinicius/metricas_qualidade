@@ -26,12 +26,13 @@ from pathlib import Path
 import streamlit as st
 
 from auth.auth_manager import AuthManager
+from ui.components import action_button, finish_action, loading_overlay
 from ui.pages.admin_page import render_admin_page, usuario_e_admin
 from ui.pages.dashboard_page import render_dashboard_page
 from ui.pages.login_page import render_login_page
 from ui.pages.upload_page import render_upload_page
 from ui.theme import injetar_css_global
-from utils.session import inicializar_sessao
+from utils.session import inicializar_sessao, resetar_para_nova_analise
 
 ASSETS_DIR = Path(__file__).parent / "assets"
 
@@ -71,18 +72,74 @@ def _renderizar_sidebar_navegacao(auth_manager: AuthManager) -> None:
     pagina_atual = st.session_state.get("pagina_atual", "upload")
     if pagina_atual not in paginas:
         # Ex.: usuário estava em "admin" e o app recarregou como outro
-        # usuário sem esse acesso - volta pra página padrão em vez de quebrar
-        # o índice do rádio abaixo.
+        # usuário sem esse acesso - volta pra página padrão em vez de deixar
+        # a navegação "presa" numa página que não existe mais pra ele.
         pagina_atual = "upload"
+        st.session_state["pagina_atual"] = pagina_atual
 
-    pagina_selecionada = st.sidebar.radio(
-        "Navegação",
-        options=list(paginas.keys()),
-        format_func=lambda chave: paginas[chave],
-        index=list(paginas.keys()).index(pagina_atual),
-        label_visibility="collapsed",
+    # Botões de verdade (um por página), em vez do `st.sidebar.radio` de
+    # antes - pedido explícito: os pontinhos de rádio deram lugar a botões
+    # clicáveis, largura total, empilhados na barra lateral. O botão da
+    # página atual fica destacado (`type="primary"`, mesma cor de marca dos
+    # outros botões de destaque do app); os demais ficam no estilo padrão
+    # (contorno). Clicar num botão que já é a página atual não faz nada -
+    # sem re-render/piscar desnecessário.
+    for chave_pagina, rotulo_pagina in paginas.items():
+        eh_pagina_atual = chave_pagina == pagina_atual
+        clicou = st.sidebar.button(
+            rotulo_pagina,
+            key=f"nav_botao_{chave_pagina}",
+            use_container_width=True,
+            type="primary" if eh_pagina_atual else "secondary",
+        )
+        if clicou and not eh_pagina_atual:
+            st.session_state["pagina_atual"] = chave_pagina
+            st.rerun()
+
+
+@st.dialog("Nova Análise")
+def _confirmar_nova_analise() -> None:
+    st.warning(
+        "⚠️ Isso limpa o arquivo importado e todos os indicadores/gráficos/filtros "
+        "gerados a partir dele - inclusive o gráfico personalizado que você montou, se "
+        "algum. Você volta para a página **Importar Dados** para processar um arquivo "
+        "novo. Sua sessão continua logada, e a organização/projeto/query do Azure DevOps "
+        "já carregados (se você usa a busca automática) não são afetados."
     )
-    st.session_state["pagina_atual"] = pagina_selecionada
+
+    chave_confirmar = "confirma_nova_analise"
+    col_confirmar, col_cancelar = st.columns(2)
+    with col_confirmar:
+        confirmar = action_button(
+            "Sim, começar nova análise", key=chave_confirmar, use_container_width=True,
+        )
+    with col_cancelar:
+        cancelar = st.button(
+            "Cancelar", key="cancela_nova_analise", use_container_width=True,
+        )
+
+    if confirmar:
+        with loading_overlay("Limpando dados, aguarde..."):
+            resetar_para_nova_analise()
+        finish_action(chave_confirmar)
+        st.rerun()
+    if cancelar:
+        st.rerun()
+
+
+def _renderizar_botao_nova_analise() -> None:
+    # Só aparece depois que já existe algum arquivo processado - antes disso
+    # não há "análise" nenhuma pra limpar, e o botão só ocuparia espaço.
+    if st.session_state.get("dataframe_bruto") is None:
+        return
+    st.sidebar.divider()
+    if st.sidebar.button(
+        "🔄 Nova Análise",
+        key="btn_abrir_nova_analise",
+        use_container_width=True,
+        help="Limpa o arquivo importado e os relatórios gerados, para processar um novo arquivo sem precisar dar F5.",
+    ):
+        _confirmar_nova_analise()
 
 
 def main() -> None:
@@ -97,6 +154,7 @@ def main() -> None:
         return
 
     _renderizar_sidebar_navegacao(auth_manager)
+    _renderizar_botao_nova_analise()
 
     pagina_atual = st.session_state["pagina_atual"]
     if pagina_atual == "upload":

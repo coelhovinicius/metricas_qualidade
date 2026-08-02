@@ -32,6 +32,7 @@ CAMPOS_MAPEAVEIS = [
     ("data_criacao", "Data de Criação"),
     ("tipo_teste", "Tipos de Teste"),
     ("responsavel", "Responsável / Executor"),
+    ("criado_por", "Criado por (reserva p/ quando Responsável estiver vazio)"),
     ("caso_teste", "Caso de Teste / ID"),
     ("severidade", "Severidade / Prioridade"),
     ("coluna_board", "Coluna do Board (Kanban)"),

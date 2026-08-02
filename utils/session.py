@@ -57,6 +57,64 @@ def resetar_dados_importados() -> None:
     # não deixar o período padrão (último mês) ser recalculado na nova carga.
     st.session_state.pop("filtro_data_inicio", None)
     st.session_state.pop("filtro_data_fim", None)
+    # Os widgets de data (`st.date_input`) guardam o próprio valor em
+    # session_state via `key=` assim que são renderizados uma vez - sem
+    # limpar essas chaves aqui também, o widget continuaria mostrando o
+    # intervalo do arquivo antigo (e fora dos limites min/max do arquivo
+    # novo) até o usuário mexer nele manualmente.
+    st.session_state.pop("input_data_inicio", None)
+    st.session_state.pop("input_data_fim", None)
+    # Lista de campos personalizados montada durante a confirmação do
+    # mapeamento anterior (ver upload_page.py) - some sentido pra um arquivo
+    # novo, que pode nem ter as mesmas colunas.
+    st.session_state.pop("campos_personalizados_temp", None)
+    # Mensagem de erro de uma carga anterior (upload manual ou Azure DevOps)
+    # não deve sobreviver a um novo processamento.
+    st.session_state.pop("erro_carga", None)
+
+
+_CHAVES_RELATORIO_DASHBOARD_PARA_LIMPAR = (
+    # Filtros da barra lateral do dashboard (Projeto / Tipos de Teste / Status)
+    "filtro_projeto",
+    "filtro_tipo_teste",
+    "filtro_status",
+    # Configurações específicas de alguns gráficos do dashboard
+    "tipo_teste_excluidos",
+    "bugs_tempo_colunas_externas",
+    "volume_responsavel_agrupar_projeto",
+    # Construtor de gráfico personalizado
+    "grafico_custom_x",
+    "grafico_custom_grupo",
+    "grafico_custom_modo",
+    "grafico_custom_metrica",
+    "grafico_custom_tipo",
+    "grafico_customizado_params",
+)
+_PREFIXO_CHAVES_TIPO_GRAFICO = "tipo_grafico_"
+
+
+def resetar_para_nova_analise() -> None:
+    """
+    Limpa os dados importados e todos os relatórios/filtros/gráficos
+    derivados deles, para permitir um novo processamento do zero sem
+    precisar dar F5 na página (o que perderia a sessão de login).
+
+    De propósito, NÃO mexe em:
+      - chaves de autenticação (o usuário continua logado);
+      - chaves de "memória" da busca automática no Azure DevOps
+        (`azure_ultima_organizacao_usada`, `azure_ultimo_projeto_usado`,
+        etc.) nem no PAT em memória - assim quem usa a busca automática não
+        precisa refazer a cascata de organização/projeto/query de novo só
+        pra começar uma nova análise;
+      - a preferência de origem de importação (`origem_importacao_persistida`).
+    """
+    resetar_dados_importados()
+    for chave in _CHAVES_RELATORIO_DASHBOARD_PARA_LIMPAR:
+        st.session_state.pop(chave, None)
+    for chave in list(st.session_state.keys()):
+        if chave.startswith(_PREFIXO_CHAVES_TIPO_GRAFICO):
+            st.session_state.pop(chave, None)
+    st.session_state["pagina_atual"] = "upload"
 
 
 def resetar_selecao_azure_devops(manter_organizacao: bool = False) -> None:

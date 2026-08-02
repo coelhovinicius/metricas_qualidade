@@ -97,19 +97,19 @@ def _aplicar_filtros_sidebar(
 
     if mapeamento.projeto and mapeamento.projeto in df.columns:
         projetos = sorted(df[mapeamento.projeto].dropna().astype(str).unique().tolist())
-        selecionados = st.sidebar.multiselect("Projeto", projetos, default=projetos)
+        selecionados = st.sidebar.multiselect("Projeto", projetos, default=projetos, key="filtro_projeto")
         if selecionados:
             df_filtrado = df_filtrado[df_filtrado[mapeamento.projeto].astype(str).isin(selecionados)]
 
     if mapeamento.tipo_teste and mapeamento.tipo_teste in df.columns:
         tipos = sorted(df_filtrado[mapeamento.tipo_teste].dropna().astype(str).unique().tolist())
-        tipos_selecionados = st.sidebar.multiselect("Tipos de Teste", tipos, default=tipos)
+        tipos_selecionados = st.sidebar.multiselect("Tipos de Teste", tipos, default=tipos, key="filtro_tipo_teste")
         if tipos_selecionados:
             df_filtrado = df_filtrado[df_filtrado[mapeamento.tipo_teste].astype(str).isin(tipos_selecionados)]
 
     if mapeamento.status and mapeamento.status in df.columns:
         status_disponiveis = sorted(df_filtrado[mapeamento.status].dropna().astype(str).unique().tolist())
-        status_selecionados = st.sidebar.multiselect("Status", status_disponiveis, default=status_disponiveis)
+        status_selecionados = st.sidebar.multiselect("Status", status_disponiveis, default=status_disponiveis, key="filtro_status")
         if status_selecionados:
             df_filtrado = df_filtrado[df_filtrado[mapeamento.status].astype(str).isin(status_selecionados)]
 
