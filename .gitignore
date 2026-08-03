@@ -33,6 +33,7 @@ Thumbs.db
 *.zip
 sample_data/
 .ignore/
+auth/auth_manager_*.py
 
 # Editor / SO
 .vscode/

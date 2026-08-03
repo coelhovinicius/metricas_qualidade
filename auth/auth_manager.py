@@ -159,7 +159,6 @@ class AuthManager:
             # secrets.toml configurado - comportamento normal em dev local.
             pass
         return chave_local
-
     def render_login_form(self) -> tuple[Optional[str], Optional[bool], Optional[str]]:
         """
         Renderiza o formulário de login e retorna (nome, status, username).
@@ -362,8 +361,59 @@ class AuthManager:
         )
 
     def logout(self) -> None:
-        """Encerra a sessão do usuário e limpa o cookie de persistência."""
-        self.authenticator.logout(button_name="Sair", location="sidebar")
+        """
+        Encerra a sessão do usuário, limpa o estado interno e anula o cookie persistente.
+        
+        POR QUE: A biblioteca impõe limites de renderização, mascarando a chamada ao
+        `st.button` e rejeitando o parâmetro de layout `use_container_width`. A solução
+        adota inversão de controle: nós construímos a arquitetura de layout nativa via
+        Flexbox e `st.button`, e injetamos a lógica de expurgo (delete) diretamente no
+        módulo interno (cookie_manager) da instância.
+        """
+        user = self.current_user_name() or self.current_username()
+
+        st.markdown(
+            """
+            <style>
+                /* Força eixo de renderização Vertical (Flex) no container da Sidebar. */
+                [data-testid="stSidebarUserContent"] {
+                    display: flex;
+                    flex-direction: column;
+                    min-height: 100%;
+                }
+                /* Desloca a div com a respectiva classe para a base absoluta (rodapé). */
+                div[class*="st-key-sidebar_logout_box"] {
+                    margin-top: auto;
+                    padding-top: 1rem;
+                }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        with st.sidebar:
+            with st.container(key="sidebar_logout_box"):
+                if user:
+                    st.caption(f"👤 Logado como **{user}**")
+                
+                # Renderização da API Nativa, garantindo ocupação lateral de 100%
+                if st.button("🚪 Sair", use_container_width=True, key="btn_logout"):
+                    
+                    # 1. Aciona rotina de remoção do cache local instanciado pela lib 
+                    try:
+                        nome_cookie = self._config["cookie"]["name"]
+                        self.authenticator.cookie_manager.delete(nome_cookie)
+                    except Exception:
+                        pass
+                        
+                    # 2. Desestabiliza variáveis de validação da state machine
+                    st.session_state['logout'] = True
+                    st.session_state['name'] = None
+                    st.session_state['username'] = None
+                    st.session_state['authentication_status'] = None
+                    
+                    # 3. Impulsiona refresh hard para reavaliar os blocos de restrição
+                    st.rerun()
 
     @staticmethod
     def is_authenticated() -> bool:
@@ -376,3 +426,7 @@ class AuthManager:
     @staticmethod
     def current_username() -> Optional[str]:
         return st.session_state.get("username")
+
+# Instanciação emulando Page Object Model (POM) export default new Page()
+# Importe esta instância diretamente nos módulos consumidores (ex: from auth_manager import auth_manager).
+auth_manager = AuthManager()
