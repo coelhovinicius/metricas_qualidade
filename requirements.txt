@@ -1,4 +1,19 @@
-streamlit>=1.39
+# streamlit e starlette ficam travados numa versão específica (em vez de
+# ">=") por causa de um bug real que já derrubou o app inteiro em produção:
+# versões recentes do Streamlit (>=1.6x) passaram a montar o próprio
+# servidor web em cima do Starlette (streamlit/web/server/starlette/...),
+# e o Streamlit chama a classe interna `GZipResponder` do Starlette com uma
+# lista fixa de argumentos. O Starlette 1.4.0 acrescentou um novo argumento
+# OBRIGATÓRIO (`thread_minimum_size`) nessa mesma classe - então, se o
+# ambiente instala streamlit + starlette>=1.4.0 juntos, TODA requisição ao
+# app quebra com "TypeError: GZipResponder.__init__() missing 1 required
+# keyword-only argument: 'thread_minimum_size'" (é exatamente o erro "Oh
+# no. Error running app." visto no Streamlit Community Cloud). O próprio
+# streamlit já pede uma faixa mais estreita (starlette<1.4.0), mas isso
+# depende de como cada ambiente resolve as versões - por segurança, fixamos
+# aqui os dois numa combinação testada e confirmada sem esse bug.
+streamlit==1.61.1
+starlette==1.3.1
 streamlit-authenticator==0.3.2
 bcrypt>=4.0
 pandas>=2.0
