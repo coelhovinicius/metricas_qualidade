@@ -1,0 +1,28 @@
+# Nunca deve ir para dentro da imagem Docker (mesmo raciocínio do .gitignore)
+auth/users.yaml
+.streamlit/secrets.toml
+*.pat
+.env
+
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+
+.git/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+.ignore/
+.prompts/
+.sample_data/
+.scripts/
+
+
+# Zips de entregas antigas na raiz do projeto - não fazem parte do app
+*.zip
