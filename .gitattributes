@@ -1,0 +1,6 @@
+# Garante que scripts shell sempre usem quebra de linha LF (padrão Unix),
+# mesmo sendo commitados no Windows com core.autocrlf=true — necessário
+# porque o docker-entrypoint.sh roda dentro de um container Linux, e uma
+# quebra de linha CRLF quebra a linha "#!/usr/bin/env bash" (erro comum:
+# "bad interpreter: /bin/bash^M: no such file or directory").
+*.sh text eol=lf
