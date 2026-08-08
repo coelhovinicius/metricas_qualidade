@@ -8,6 +8,7 @@ Componentes de interface reutilizáveis:
     - `action_button`: botão que se desabilita sozinho após o primeiro clique
       para evitar múltiplas requisições disparadas por cliques repetidos;
     - `kpi_card`: cartão estilizado para indicadores numéricos.
+    - `rolar_para_topo`: rola a janela pro topo (ver `app.py`).
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from pathlib import Path
 from typing import Generator, Optional
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 ASSETS_DIR = Path(__file__).parent.parent / "assets"
 
@@ -45,6 +47,48 @@ def render_header(titulo: str, subtitulo: str = "") -> None:
         </div>
         """,
         unsafe_allow_html=True,
+    )
+
+
+def rolar_para_topo() -> None:
+    """
+    Rola a janela pro topo - usada em `app.py` sempre que a TELA muda de
+    verdade (login <-> app autenticado, ou troca de página no menu lateral:
+    Importar Dados/Indicadores/Administração), pra quem chegou rolado pra
+    baixo numa tela (ex.: até o fim do dashboard) não continuar rolado pra
+    baixo na tela seguinte, que é outro conteúdo.
+
+    `st.markdown(..., unsafe_allow_html=True)` NÃO executa `<script>` (o
+    Streamlit sanitiza) - só `st.components.v1.html(...)` roda de verdade,
+    porque desenha um iframe de componente próprio; o script roda DENTRO
+    desse iframe, então precisa mirar `window.top` (a janela de verdade do
+    navegador) pra rolar a página real - mesma técnica já usada em
+    `auth/auth_manager.py` (`_forcar_logout_ao_fechar_navegador`) e em
+    `ui/pages/login_page.py` (`_focar_campo_usuario`).
+
+    Chama `scrollTo` mais de uma vez (na hora + alguns atrasos pequenos) de
+    propósito: o próprio Streamlit tenta, sozinho, PRESERVAR a posição de
+    rolagem entre reruns (pra não perder o lugar ao interagir com um
+    filtro/widget) - se essa restauração dele rodar DEPOIS da nossa chamada
+    única, ela cancelava o efeito e a tela voltava a aparecer rolada pra
+    baixo. Repetir por ~1s garante que rolar pro topo seja sempre a ÚLTIMA
+    palavra, não importa a ordem em que os dois rodem.
+    """
+    components.html(
+        """
+        <script>
+        (function() {
+            function rolarTopo() {
+                window.top.scrollTo({top: 0, left: 0, behavior: "auto"});
+            }
+            rolarTopo();
+            [50, 150, 300, 600, 1000].forEach(function(atraso) {
+                setTimeout(rolarTopo, atraso);
+            });
+        })();
+        </script>
+        """,
+        height=0,
     )
 
 

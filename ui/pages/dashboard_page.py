@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -13,8 +12,17 @@ import streamlit as st
 
 from core import analytics
 from core.column_mapper import MapeamentoColunas
+from core.fuso_horario import agora_brasilia
 from ui.components import action_button, finish_action, loading_overlay, render_header, render_kpi_row
-from ui.theme import PALETA_BUGS_TEMPO, PALETA_COLORIDA, PALETA_GRAFICOS, PALETA_STATUS, cor_discreta_coluna_board
+from ui.theme import (
+    PALETA_BUGS_TEMPO,
+    PALETA_COLORIDA,
+    PALETA_GRAFICOS,
+    PALETA_STATUS,
+    cor_discreta_coluna_board,
+    cor_discreta_criticidade,
+    cor_discreta_severidade_prioridade,
+)
 
 TIPOS_GRAFICO_PADRAO = ["Barras", "Barras Horizontais", "Pizza", "Rosca", "Linha", "Área", "Treemap", "Pareto", "Radar (Preenchido)"]
 
@@ -75,7 +83,7 @@ def _aplicar_filtros_sidebar(
             # "Confirmar intervalo" do usuário): do dia atual - a data em que
             # o arquivo está sendo consultado/importado - até um mês antes,
             # sempre dentro dos limites reais do arquivo importado.
-            fim_padrao = min(max(datetime.now().date(), data_min), data_max)
+            fim_padrao = min(max(agora_brasilia().date(), data_min), data_max)
             inicio_padrao = max(data_min, (pd.Timestamp(fim_padrao) - pd.DateOffset(months=1)).date())
 
             st.sidebar.markdown("### Período")
@@ -83,10 +91,12 @@ def _aplicar_filtros_sidebar(
             entrada_inicio = col_de.date_input(
                 "De", value=st.session_state.get("filtro_data_inicio", inicio_padrao),
                 min_value=data_min, max_value=data_max, key="input_data_inicio",
+                format="DD/MM/YYYY",
             )
             entrada_fim = col_ate.date_input(
                 "Até", value=st.session_state.get("filtro_data_fim", fim_padrao),
                 min_value=data_min, max_value=data_max, key="input_data_fim",
+                format="DD/MM/YYYY",
             )
             if st.sidebar.button("Confirmar intervalo", use_container_width=True, type="primary", key="btn_confirmar_intervalo"):
                 st.session_state["filtro_data_inicio"] = entrada_inicio
@@ -183,6 +193,7 @@ def _construir_figura(
     y: str,
     cor: Optional[str] = None,
     ordem_categorias: Optional[dict[str, list[str]]] = None,
+    mapa_cores_fixo: Optional[dict[str, str]] = None,
 ) -> go.Figure:
     """
     Monta a `Figure` do Plotly (sem desenhar nada na tela) - separado de
@@ -223,8 +234,20 @@ def _construir_figura(
     if cor_coluna_board_sem_dimensao:
         cor_discreta = cor_discreta_coluna_board(set(df[x]))
 
+    # Mesma ideia acima, só que pro esquema fixo de CRITICIDADE (vermelho/
+    # amarelo/verde/azul - ver `ui/theme.py`) - quem chama `_plotar` já
+    # calculou o mapa (`mapa_cores_fixo`, ou `None` quando não conseguiu
+    # reconhecer a criticidade dos valores com confiança) e só repassa aqui.
+    cor_criticidade_sem_dimensao = (
+        cor is None and mapa_cores_fixo is not None and x in df.columns
+    )
+    if cor_criticidade_sem_dimensao:
+        cor_discreta = mapa_cores_fixo
+
+    cor_fixa_por_categoria_unica = cor_coluna_board_sem_dimensao or cor_criticidade_sem_dimensao
+
     def _cores_para_barras(eixo_categoria: str) -> list[str]:
-        if cor_coluna_board_sem_dimensao:
+        if cor_fixa_por_categoria_unica:
             return [cor_discreta[str(valor)] for valor in df[eixo_categoria]]
         return _cores_por_posicao(len(df))
 
@@ -245,12 +268,13 @@ def _construir_figura(
         # px.pie só aplica `color_discrete_map` quando `color` é passado de
         # verdade (com `color=None`, ignora o mapa e cicla a paleta padrão por
         # posição) - por isso, quando não há uma segunda dimensão mas o eixo É
-        # a Coluna do Board, usa a própria coluna de nomes (`x`) como `color`.
-        cor_pizza = cor or (x if cor_coluna_board_sem_dimensao else None)
+        # a Coluna do Board (ou tem esquema fixo de criticidade), usa a
+        # própria coluna de nomes (`x`) como `color`.
+        cor_pizza = cor or (x if cor_fixa_por_categoria_unica else None)
         fig = px.pie(df, names=x, values=y, color=cor_pizza, color_discrete_sequence=PALETA_COLORIDA,
                       color_discrete_map=cor_discreta, category_orders=ordem_categorias)
     elif tipo == "Rosca":
-        cor_pizza = cor or (x if cor_coluna_board_sem_dimensao else None)
+        cor_pizza = cor or (x if cor_fixa_por_categoria_unica else None)
         fig = px.pie(df, names=x, values=y, color=cor_pizza, color_discrete_sequence=PALETA_COLORIDA,
                       color_discrete_map=cor_discreta, hole=0.45, category_orders=ordem_categorias)
     elif tipo == "Área":
@@ -335,6 +359,7 @@ def _plotar(
     chave: str,
     cor: Optional[str] = None,
     ordem_categorias: Optional[dict[str, list[str]]] = None,
+    mapa_cores_fixo: Optional[dict[str, str]] = None,
     titulo: Optional[str] = None,
     secoes_pdf: Optional[list[dict]] = None,
 ) -> None:
@@ -348,7 +373,7 @@ def _plotar(
     que acabou de ser desenhado na tela, na mesma ordem em que as seções do
     dashboard chamam esta função.
     """
-    fig = _construir_figura(df, tipo, x, y, cor=cor, ordem_categorias=ordem_categorias)
+    fig = _construir_figura(df, tipo, x, y, cor=cor, ordem_categorias=ordem_categorias, mapa_cores_fixo=mapa_cores_fixo)
     st.plotly_chart(fig, use_container_width=True, key=f"chart_{chave}")
 
     if tipo == "Radar (Preenchido)" and cor is None:
@@ -360,6 +385,76 @@ def _plotar(
 
     if secoes_pdf is not None:
         secoes_pdf.append({"titulo": titulo or chave, "fig": fig})
+
+
+class _FilaGraficos:
+    """
+    Emparelha os gráficos do dashboard dois a dois, lado a lado (pedido
+    explícito: "quero que, quando criar os gráficos, eles apareçam em duas
+    colunas, dois gráficos lado a lado"), sem precisar reescrever cada seção
+    numa estrutura de grade rígida - cada seção continua decidindo sozinha,
+    em tempo real, SE tem algo pra mostrar (dados/mapeamento disponíveis);
+    só a RENDERIZAÇÃO de cada uma vira uma função (`renderizador`), guardada
+    aqui até formar um par com a próxima seção que também tiver algo pra
+    mostrar.
+
+    Mobile: `st.columns(2)` já empilha sozinho numa coluna só em telas
+    estreitas (comportamento nativo do Streamlit, sem precisar de nenhuma
+    media query customizada) - por isso o par vira uma coluna só, um gráfico
+    embaixo do outro, automaticamente no celular.
+
+    Conteúdo que NÃO é gráfico (cartões de KPI, tabelas, o construtor de
+    gráfico personalizado) não passa por aqui - continua em largura total,
+    como sempre foi. Antes de desenhar qualquer um desses, quem chama deve
+    chamar `flush()` pra não deixar um gráfico "preso" esperando um par que
+    nunca vem.
+    """
+
+    def __init__(self, colunas: int = 1) -> None:
+        # `colunas`: 1 = um gráfico por linha (padrão - layout "clássico", de
+        # antes da grade em duas colunas), 2 = dois gráficos lado a lado.
+        # Controlado pelo toggle "Gráficos por linha" no topo do dashboard
+        # (ver `render_dashboard_page`) - pedido explícito do usuário depois
+        # de ver a versão só com 2 colunas: manter a opção de 2 colunas (pra
+        # quem quiser), mas com 1 coluna como padrão, porque vários gráficos
+        # têm textos de explicação longos que ficavam espremidos demais lado
+        # a lado.
+        self._colunas = colunas
+        self._pendente = None
+
+    def adicionar(self, renderizador) -> None:
+        if self._colunas <= 1:
+            renderizador()
+            st.divider()
+            return
+        if self._pendente is None:
+            self._pendente = renderizador
+            return
+        coluna_esquerda, coluna_direita = st.columns(2, gap="large")
+        with coluna_esquerda:
+            self._pendente()
+        with coluna_direita:
+            renderizador()
+        st.divider()
+        self._pendente = None
+
+    def flush(self) -> None:
+        if self._pendente is not None:
+            self._pendente()
+            st.divider()
+            self._pendente = None
+
+
+def _explicacao(texto: str, rotulo: str = "ℹ️ Sobre este indicador") -> None:
+    """
+    Mostra um texto explicativo dentro de um expansor RECOLHIDO por padrão,
+    em vez de um `st.caption` sempre visível - pedido explícito: os textos
+    de explicação de cada gráfico (metodologia, o que entra/não entra no
+    cálculo etc.) são longos e atrapalhavam a visualização dos gráficos;
+    agora ficam escondidos até o usuário optar por abrir.
+    """
+    with st.expander(rotulo, expanded=False):
+        st.caption(texto)
 
 
 def render_dashboard_page() -> None:
@@ -387,10 +482,35 @@ def render_dashboard_page() -> None:
 
     status_binario = analytics.status_e_binario(df_filtrado)
 
+    # ------------------------------------------------- Toggle: gráficos por linha
+    # Fica logo no topo da página, antes de qualquer gráfico - controla o
+    # layout de TODOS os gráficos abaixo (via `_FilaGraficos`). Padrão = 1
+    # por linha (layout "clássico"); "2 por linha" é opcional, pra quem
+    # preferir ver mais gráficos de uma vez (bom pra gráficos mais simples,
+    # com pouco texto de explicação).
+    col_toggle_colunas, _col_espaco_toggle = st.columns([1, 2])
+    with col_toggle_colunas:
+        colunas_por_linha = st.radio(
+            "Gráficos por linha",
+            options=[1, 2],
+            format_func=lambda valor: "1 por linha (padrão)" if valor == 1 else "2 por linha (lado a lado)",
+            index=0,
+            key="dashboard_colunas_por_linha",
+            horizontal=True,
+            help=(
+                "Controla quantos gráficos aparecem lado a lado em cada linha do painel. "
+                "No celular, sempre fica um por linha, independente dessa escolha."
+            ),
+        )
+    st.markdown("<br>", unsafe_allow_html=True)
+
     # Lista mutável que vai sendo preenchida por `_plotar`/`_renderizar_construtor_grafico_personalizado`
     # conforme cada seção é desenhada abaixo - usada só pelo botão "Gerar PDF
     # do relatório" ao final da página (ver `core/pdf_report.py`).
     secoes_pdf: list[dict] = []
+    # Fila que emparelha os gráficos (1 ou 2 por linha, conforme o toggle
+    # acima) - ver `_FilaGraficos`.
+    fila = _FilaGraficos(colunas=colunas_por_linha)
 
     # ---------------------------------------------------------------- KPIs
     if status_binario:
@@ -419,54 +539,60 @@ def render_dashboard_page() -> None:
 
     # ---------------------------------------------------- Status geral
     if mapeamento.status:
-        st.markdown("**Distribuição de Status**" if not status_binario else "**Passou vs. Não Passou**")
-        if not status_binario:
-            st.caption(
-                f"Valores exatamente como vêm do campo **{mapeamento.status}** (Status/State) de cada "
-                "work item - **não tem nenhuma relação com a Coluna do Board** (Kanban), que é outro "
-                "campo, mapeado e mostrado separadamente mais abaixo. Se times/Area Paths diferentes "
-                "usam templates de processo diferentes no Azure DevOps, cada um pode ter seu próprio "
-                "vocabulário de Status (ex.: um time usa só New/Active/Closed, outro usa nomes próprios "
-                "como UAT/QA/Deploy) - com vários Area Paths selecionados ao mesmo tempo, é esperado ver "
-                "esses vocabulários diferentes juntos neste gráfico. Para ver qual Area Path usa qual "
-                "valor, confira o gráfico **Area Path × Status** logo abaixo."
+        def _sec_status_geral() -> None:
+            st.markdown("**Distribuição de Status**" if not status_binario else "**Passou vs. Não Passou**")
+            if not status_binario:
+                _explicacao(
+                    f"Valores exatamente como vêm do campo **{mapeamento.status}** (Status/State) de cada "
+                    "work item - **não tem nenhuma relação com a Coluna do Board** (Kanban), que é outro "
+                    "campo, mapeado e mostrado separadamente mais abaixo. Se times/Area Paths diferentes "
+                    "usam templates de processo diferentes no Azure DevOps, cada um pode ter seu próprio "
+                    "vocabulário de Status (ex.: um time usa só New/Active/Closed, outro usa nomes próprios "
+                    "como UAT/QA/Deploy) - com vários Area Paths selecionados ao mesmo tempo, é esperado ver "
+                    "esses vocabulários diferentes juntos neste gráfico. Para ver qual Area Path usa qual "
+                    "valor, confira o gráfico **Area Path × Status** logo abaixo."
+                )
+            col_tipo, _col_espaco = st.columns([1, 3])
+            with col_tipo:
+                tipo_status = _selecionar_tipo_grafico("status_geral", ["Pizza", "Rosca", "Barras", "Barras Horizontais", "Treemap", "Radar (Preenchido)"])
+            if status_binario:
+                resumo_status = df_filtrado["__status_normalizado__"].value_counts().reset_index()
+                resumo_status.columns = ["Status", "Quantidade"]
+            else:
+                resumo_status = analytics.distribuicao_status_bruto(df_filtrado, mapeamento)
+            _plotar(
+                resumo_status, tipo_status, x="Status", y="Quantidade", chave="status_geral",
+                titulo="Distribuição de Status" if not status_binario else "Passou vs. Não Passou",
+                secoes_pdf=secoes_pdf,
             )
-        col_tipo, _col_espaco = st.columns([1, 3])
-        with col_tipo:
-            tipo_status = _selecionar_tipo_grafico("status_geral", ["Pizza", "Rosca", "Barras", "Barras Horizontais", "Treemap", "Radar (Preenchido)"])
-        if status_binario:
-            resumo_status = df_filtrado["__status_normalizado__"].value_counts().reset_index()
-            resumo_status.columns = ["Status", "Quantidade"]
-        else:
-            resumo_status = analytics.distribuicao_status_bruto(df_filtrado, mapeamento)
-        _plotar(
-            resumo_status, tipo_status, x="Status", y="Quantidade", chave="status_geral",
-            titulo="Distribuição de Status" if not status_binario else "Passou vs. Não Passou",
-            secoes_pdf=secoes_pdf,
-        )
-        st.divider()
+        fila.adicionar(_sec_status_geral)
 
     # ------------------------------------------------- Area Path × Status
     if not status_binario:
         df_area_x_status = analytics.distribuicao_area_path_x_status(df_filtrado, mapeamento)
         if df_area_x_status is not None and not df_area_x_status.empty:
-            st.markdown("**Area Path × Status**")
-            st.caption(
-                "Discrimina, para cada Area Path/Projeto, quantos work items estão em cada valor de "
-                "Status - útil para confirmar que valores como UAT/QA/Deploy (quando aparecem) vêm de "
-                "um Area Path/time específico com vocabulário de Status próprio, e não de uma mistura "
-                "com a Coluna do Board."
-            )
-            col_area_status, _col_espaco_area_status = st.columns([1, 3])
-            with col_area_status:
-                tipo_area_status = _selecionar_tipo_grafico("area_path_status", ["Barras", "Barras Horizontais", "Treemap"])
-            _plotar(
-                df_area_x_status, tipo_area_status, x="Projeto", y="Quantidade", chave="area_path_status", cor="Status",
-                titulo="Area Path × Status", secoes_pdf=secoes_pdf,
-            )
-            st.divider()
+            def _sec_area_path_status() -> None:
+                st.markdown("**Area Path × Status**")
+                _explicacao(
+                    "Discrimina, para cada Area Path/Projeto, quantos work items estão em cada valor de "
+                    "Status - útil para confirmar que valores como UAT/QA/Deploy (quando aparecem) vêm de "
+                    "um Area Path/time específico com vocabulário de Status próprio, e não de uma mistura "
+                    "com a Coluna do Board."
+                )
+                col_area_status, _col_espaco_area_status = st.columns([1, 3])
+                with col_area_status:
+                    tipo_area_status = _selecionar_tipo_grafico("area_path_status", ["Barras", "Barras Horizontais", "Treemap"])
+                _plotar(
+                    df_area_x_status, tipo_area_status, x="Projeto", y="Quantidade", chave="area_path_status", cor="Status",
+                    titulo="Area Path × Status", secoes_pdf=secoes_pdf,
+                )
+            fila.adicionar(_sec_area_path_status)
 
     # ------------------------------------------------- Backlog aberto (idade)
+    # Não é gráfico (é um bloco de KPIs + tabela) - fica em largura total,
+    # então esvazia qualquer gráfico pendente na fila antes (senão ele
+    # ficaria "preso" esperando um par que nunca vem).
+    fila.flush()
     indicadores_backlog = analytics.calcular_backlog_aberto(df_filtrado, mapeamento)
     if indicadores_backlog is not None and indicadores_backlog.total_abertos > 0:
         st.markdown("**Backlog Aberto — Tempo Parado**")
@@ -494,8 +620,11 @@ def render_dashboard_page() -> None:
     # ------------------------------------------------------------- Sprints
     df_velocidade_sprint = analytics.itens_concluidos_por_sprint(df_filtrado, mapeamento)
     if df_velocidade_sprint is not None and not df_velocidade_sprint.empty:
+        # O cartão de KPIs desta seção é largura total - esvazia a fila antes
+        # dele, e só o GRÁFICO (abaixo do KPI) entra no emparelhamento.
+        fila.flush()
         st.markdown("**Sprints — Itens Concluídos**")
-        st.caption(
+        _explicacao(
             "Quantos itens foram concluídos em cada sprint, dos mais antigos para o mais "
             "recente (aproximado pela data mais antiga dos itens de cada sprint, já que o "
             "Azure DevOps não informa data de início/fim de sprint por esta via) - use para "
@@ -508,53 +637,58 @@ def render_dashboard_page() -> None:
             ("Concluídos no Sprint Mais Recente", f"{int(sprint_mais_recente['Quantidade']):,}".replace(",", "."), None, True),
             ("Média por Sprint", f"{media_por_sprint:.1f}".replace(".", ","), None, True),
         ])
-        col_tipo_sprint, _col_espaco_sprint = st.columns([1, 3])
-        with col_tipo_sprint:
-            tipo_sprint = _selecionar_tipo_grafico("sprint_velocidade", ["Barras", "Linha", "Área"])
-        _plotar(
-            df_velocidade_sprint, tipo_sprint, x="Sprint", y="Quantidade", chave="sprint_velocidade",
-            titulo="Sprints — Itens Concluídos", secoes_pdf=secoes_pdf,
-        )
-        st.divider()
+
+        def _sec_sprint_velocidade() -> None:
+            col_tipo_sprint, _col_espaco_sprint = st.columns([1, 3])
+            with col_tipo_sprint:
+                tipo_sprint = _selecionar_tipo_grafico("sprint_velocidade", ["Barras", "Linha", "Área"])
+            _plotar(
+                df_velocidade_sprint, tipo_sprint, x="Sprint", y="Quantidade", chave="sprint_velocidade",
+                titulo="Sprints — Itens Concluídos", secoes_pdf=secoes_pdf,
+            )
+        fila.adicionar(_sec_sprint_velocidade)
 
     # ------------------------------------------ Planejamento vs Efetivado
     df_planejamento = analytics.planejamento_vs_efetivado(df_filtrado, mapeamento)
     if df_planejamento is not None:
-        st.markdown("**Planejamento vs. Testes Efetivados**")
-        col_tipo, _col_espaco = st.columns([1, 3])
-        with col_tipo:
-            tipo_planejamento = _selecionar_tipo_grafico("planejamento", ["Barras", "Pizza", "Rosca"])
-        _plotar(
-            df_planejamento, tipo_planejamento, x="Categoria", y="Quantidade", chave="planejamento",
-            titulo="Planejamento vs. Testes Efetivados", secoes_pdf=secoes_pdf,
-        )
-        st.divider()
+        def _sec_planejamento() -> None:
+            st.markdown("**Planejamento vs. Testes Efetivados**")
+            col_tipo, _col_espaco = st.columns([1, 3])
+            with col_tipo:
+                tipo_planejamento = _selecionar_tipo_grafico("planejamento", ["Barras", "Pizza", "Rosca"])
+            _plotar(
+                df_planejamento, tipo_planejamento, x="Categoria", y="Quantidade", chave="planejamento",
+                titulo="Planejamento vs. Testes Efetivados", secoes_pdf=secoes_pdf,
+            )
+        fila.adicionar(_sec_planejamento)
 
     # ------------------------------------------------------ Testes por projeto
     df_projeto = analytics.testes_por_projeto(df_filtrado, mapeamento)
     if df_projeto is not None:
-        st.markdown("**Testes por Projeto**")
-        col_tipo, _col_espaco = st.columns([1, 3])
-        with col_tipo:
-            tipo_projeto = _selecionar_tipo_grafico("testes_projeto")
-        _plotar(
-            df_projeto, tipo_projeto, x="Projeto", y="Quantidade de Testes", chave="testes_projeto",
-            titulo="Testes por Projeto", secoes_pdf=secoes_pdf,
-        )
-        st.divider()
+        def _sec_testes_projeto() -> None:
+            st.markdown("**Testes por Projeto**")
+            col_tipo, _col_espaco = st.columns([1, 3])
+            with col_tipo:
+                tipo_projeto = _selecionar_tipo_grafico("testes_projeto")
+            _plotar(
+                df_projeto, tipo_projeto, x="Projeto", y="Quantidade de Testes", chave="testes_projeto",
+                titulo="Testes por Projeto", secoes_pdf=secoes_pdf,
+            )
+        fila.adicionar(_sec_testes_projeto)
 
     # ------------------------------------------------- Ranking de bugs
     df_bugs = analytics.ranking_bugs_por_projeto(df_filtrado, mapeamento)
     if df_bugs is not None and not df_bugs.empty:
-        st.markdown("**Ranking de Bugs por Projeto**")
-        col_tipo, _col_espaco = st.columns([1, 3])
-        with col_tipo:
-            tipo_bugs = _selecionar_tipo_grafico("bugs_projeto")
-        _plotar(
-            df_bugs, tipo_bugs, x="Projeto", y="Quantidade de Bugs", chave="bugs_projeto",
-            titulo="Ranking de Bugs por Projeto", secoes_pdf=secoes_pdf,
-        )
-        st.divider()
+        def _sec_bugs_projeto() -> None:
+            st.markdown("**Ranking de Bugs por Projeto**")
+            col_tipo, _col_espaco = st.columns([1, 3])
+            with col_tipo:
+                tipo_bugs = _selecionar_tipo_grafico("bugs_projeto")
+            _plotar(
+                df_bugs, tipo_bugs, x="Projeto", y="Quantidade de Bugs", chave="bugs_projeto",
+                titulo="Ranking de Bugs por Projeto", secoes_pdf=secoes_pdf,
+            )
+        fila.adicionar(_sec_bugs_projeto)
 
     # ------------------------------------------------- Distribuição por Tipo de Teste
     if mapeamento.tipo_teste and mapeamento.tipo_teste in df_filtrado.columns:
@@ -573,55 +707,58 @@ def render_dashboard_page() -> None:
             if any(palavra in valor.lower() for palavra in _PALAVRAS_TIPO_CONTAINER)
         ]
 
-        st.markdown("**Distribuição por Tipo de Teste**")
-        st.caption(
-            "Por padrão, exclui tipos que são contêineres organizacionais (ex.: Test Plan, "
-            "Test Suite) — eles agrupam vários Test Cases e não representam um item de teste "
-            "individual, então não fazem sentido na mesma régua de contagem."
-        )
-        tipos_excluidos_selecionados = st.multiselect(
-            "Tipos a excluir desta distribuição",
-            options=tipos_teste_disponiveis,
-            default=padrao_tipos_excluidos,
-            key="tipo_teste_excluidos",
-            help=(
-                "Itens desses tipos não entram na contagem deste gráfico específico — "
-                "continuam contando normalmente nos outros indicadores do painel."
-            ),
-        )
-        df_tipo_teste = analytics.distribuicao_tipo_teste(
-            df_filtrado, mapeamento, tipos_excluidos=set(tipos_excluidos_selecionados)
-        )
-        if df_tipo_teste is not None and not df_tipo_teste.empty:
-            col_tipo, _col_espaco = st.columns([1, 3])
-            with col_tipo:
-                tipo_tt = _selecionar_tipo_grafico("tipo_teste", ["Treemap", "Barras", "Pizza", "Rosca", "Barras Horizontais", "Pareto", "Radar (Preenchido)"])
-            _plotar(
-                df_tipo_teste, tipo_tt, x="Tipo de Teste", y="Quantidade", chave="tipo_teste",
-                titulo="Distribuição por Tipo de Teste", secoes_pdf=secoes_pdf,
+        def _sec_tipo_teste() -> None:
+            st.markdown("**Distribuição por Tipo de Teste**")
+            _explicacao(
+                "Por padrão, exclui tipos que são contêineres organizacionais (ex.: Test Plan, "
+                "Test Suite) — eles agrupam vários Test Cases e não representam um item de teste "
+                "individual, então não fazem sentido na mesma régua de contagem."
             )
-        else:
-            st.info("Nenhum tipo restante depois da exclusão acima — ajuste a lista para ver o gráfico.")
-        st.divider()
+            tipos_excluidos_selecionados = st.multiselect(
+                "Tipos a excluir desta distribuição",
+                options=tipos_teste_disponiveis,
+                default=padrao_tipos_excluidos,
+                key="tipo_teste_excluidos",
+                help=(
+                    "Itens desses tipos não entram na contagem deste gráfico específico — "
+                    "continuam contando normalmente nos outros indicadores do painel."
+                ),
+            )
+            df_tipo_teste = analytics.distribuicao_tipo_teste(
+                df_filtrado, mapeamento, tipos_excluidos=set(tipos_excluidos_selecionados)
+            )
+            if df_tipo_teste is not None and not df_tipo_teste.empty:
+                col_tipo, _col_espaco = st.columns([1, 3])
+                with col_tipo:
+                    tipo_tt = _selecionar_tipo_grafico("tipo_teste", ["Treemap", "Barras", "Pizza", "Rosca", "Barras Horizontais", "Pareto", "Radar (Preenchido)"])
+                _plotar(
+                    df_tipo_teste, tipo_tt, x="Tipo de Teste", y="Quantidade", chave="tipo_teste",
+                    titulo="Distribuição por Tipo de Teste", secoes_pdf=secoes_pdf,
+                )
+            else:
+                st.info("Nenhum tipo restante depois da exclusão acima — ajuste a lista para ver o gráfico.")
+        fila.adicionar(_sec_tipo_teste)
 
     # ------------------------------------------------- Taxa de sucesso por projeto
     df_taxa_projeto = analytics.taxa_sucesso_por_projeto(df_filtrado, mapeamento)
     if df_taxa_projeto is not None and not df_taxa_projeto.empty:
-        st.markdown("**Taxa de Sucesso por Projeto**")
-        _plotar(
-            df_taxa_projeto, "Barras", x="Projeto", y="Taxa de Sucesso (%)", chave="taxa_projeto",
-            titulo="Taxa de Sucesso por Projeto", secoes_pdf=secoes_pdf,
-        )
-        st.divider()
+        def _sec_taxa_projeto() -> None:
+            st.markdown("**Taxa de Sucesso por Projeto**")
+            _plotar(
+                df_taxa_projeto, "Barras", x="Projeto", y="Taxa de Sucesso (%)", chave="taxa_projeto",
+                titulo="Taxa de Sucesso por Projeto", secoes_pdf=secoes_pdf,
+            )
+        fila.adicionar(_sec_taxa_projeto)
 
     # ------------------------------------------------- Tendência temporal
     df_tendencia = analytics.tendencia_temporal(df_filtrado, mapeamento)
     if df_tendencia is not None:
-        st.markdown("**Tendência ao Longo do Tempo**")
-        _plotar(df_tendencia, "Linha", x="Semana", y="Quantidade", chave="tendencia",
-                cor="Status" if "Status" in df_tendencia.columns else None,
-                titulo="Tendência ao Longo do Tempo", secoes_pdf=secoes_pdf)
-        st.divider()
+        def _sec_tendencia() -> None:
+            st.markdown("**Tendência ao Longo do Tempo**")
+            _plotar(df_tendencia, "Linha", x="Semana", y="Quantidade", chave="tendencia",
+                    cor="Status" if "Status" in df_tendencia.columns else None,
+                    titulo="Tendência ao Longo do Tempo", secoes_pdf=secoes_pdf)
+        fila.adicionar(_sec_tendencia)
 
     # ------------------------------------------------- Bugs abertos vs. solucionados
     colunas_board_disponiveis: list[str] = []
@@ -652,146 +789,171 @@ def render_dashboard_page() -> None:
         df_filtrado, mapeamento, colunas_aguardando_externo=set(colunas_externas_selecionadas)
     )
     if df_bugs_tempo is not None and not df_bugs_tempo.empty:
-        st.markdown("**Bugs Abertos vs. Solucionados**")
-        st.caption(
-            "Acumulado por semana de criação. 'Finalizado' reflete a situação atual "
-            "(o arquivo não traz data de resolução), então mostra quantos dos bugs "
-            "criados até cada semana já estão numa situação terminal hoje."
-        )
-        if colunas_board_disponiveis:
-            st.multiselect(
-                "Colunas do board fora do controle da QA (aguardando validação externa)",
-                options=colunas_board_disponiveis,
-                default=padrao_colunas_externas,
-                key="bugs_tempo_colunas_externas",
-                help=(
-                    "Por padrão vem marcado tudo que não for exatamente 'Pronto para QA' e/ou "
-                    "'Teste QA' - as únicas colunas que representam trabalho sob "
-                    "responsabilidade da QA. Itens que a QA já resolveu, mas que estão parados "
-                    "numa dessas colunas marcadas (ex.: 'Pronto para UAT', aguardando o time de "
-                    "Produto/Negócio/UX validar) entram na categoria 'Aguardando Validação "
-                    "Externa' em vez de contar como trabalho ainda em andamento da QA."
-                ),
+        def _sec_bugs_tempo() -> None:
+            st.markdown("**Bugs Abertos vs. Solucionados**")
+            _explicacao(
+                "Acumulado por semana de criação. 'Finalizado' reflete a situação atual "
+                "(o arquivo não traz data de resolução), então mostra quantos dos bugs "
+                "criados até cada semana já estão numa situação terminal hoje."
             )
-        col_tipo, _col_espaco = st.columns([1, 3])
-        with col_tipo:
-            tipo_bugs_tempo = _selecionar_tipo_grafico("bugs_tempo", ["Área", "Linha", "Barras"])
-        colunas_valor = [coluna for coluna in df_bugs_tempo.columns if coluna not in ("Semana", "Bugs Criados (acumulado)")]
-        df_bugs_tempo_longo = df_bugs_tempo.melt(
-            id_vars="Semana",
-            value_vars=colunas_valor,
-            var_name="Categoria",
-            value_name="Quantidade",
-        )
-        _plotar(df_bugs_tempo_longo, tipo_bugs_tempo, x="Semana", y="Quantidade",
-                chave="bugs_tempo", cor="Categoria",
-                titulo="Bugs Abertos vs. Solucionados", secoes_pdf=secoes_pdf)
-        st.divider()
+            if colunas_board_disponiveis:
+                st.multiselect(
+                    "Colunas do board fora do controle da QA (aguardando validação externa)",
+                    options=colunas_board_disponiveis,
+                    default=padrao_colunas_externas,
+                    key="bugs_tempo_colunas_externas",
+                    help=(
+                        "Por padrão vem marcado tudo que não for exatamente 'Pronto para QA' e/ou "
+                        "'Teste QA' - as únicas colunas que representam trabalho sob "
+                        "responsabilidade da QA. Itens que a QA já resolveu, mas que estão parados "
+                        "numa dessas colunas marcadas (ex.: 'Pronto para UAT', aguardando o time de "
+                        "Produto/Negócio/UX validar) entram na categoria 'Aguardando Validação "
+                        "Externa' em vez de contar como trabalho ainda em andamento da QA."
+                    ),
+                )
+            col_tipo, _col_espaco = st.columns([1, 3])
+            with col_tipo:
+                tipo_bugs_tempo = _selecionar_tipo_grafico("bugs_tempo", ["Área", "Linha", "Barras"])
+            colunas_valor = [coluna for coluna in df_bugs_tempo.columns if coluna not in ("Semana", "Bugs Criados (acumulado)")]
+            df_bugs_tempo_longo = df_bugs_tempo.melt(
+                id_vars="Semana",
+                value_vars=colunas_valor,
+                var_name="Categoria",
+                value_name="Quantidade",
+            )
+            _plotar(df_bugs_tempo_longo, tipo_bugs_tempo, x="Semana", y="Quantidade",
+                    chave="bugs_tempo", cor="Categoria",
+                    titulo="Bugs Abertos vs. Solucionados", secoes_pdf=secoes_pdf)
+        fila.adicionar(_sec_bugs_tempo)
 
     # ------------------------------------------------- Distribuição de severidade
     df_severidade = analytics.distribuicao_severidade(df_filtrado, mapeamento)
     if df_severidade is not None and not df_severidade.empty:
-        st.markdown("**Distribuição por Severidade/Prioridade**")
-        _plotar(
-            df_severidade, "Pizza", x="Severidade", y="Quantidade", chave="severidade",
-            titulo="Distribuição por Severidade/Prioridade", secoes_pdf=secoes_pdf,
-        )
-        st.divider()
+        def _sec_severidade() -> None:
+            st.markdown("**Distribuição por Severidade/Prioridade**")
+            # Cores ESTRITAS e fixas pro vocabulário padrão do Azure DevOps
+            # (ver `cor_discreta_severidade_prioridade` em `ui/theme.py`):
+            # Critical=vermelho, High=laranja, Medium=amarelo, Low=verde,
+            # "Não atribuído(a)"=azul - sempre, garantido, não é uma tentativa
+            # de adivinhar por heurística.
+            #
+            # O universo de valores usado aqui é o campo **completo, sem os
+            # filtros da barra lateral** (`df`, não `df_filtrado`/
+            # `df_severidade`) - assim a cor de cada valor conhecido nunca
+            # muda dependendo do que o filtro deixa visível no momento (ex.:
+            # filtrar um período sem nenhum item "Medium" não faz o "Low"
+            # mudar de cor).
+            universo_severidade = (
+                df[mapeamento.severidade] if mapeamento.severidade in df.columns else df_severidade["Severidade"]
+            )
+            mapa_cores_severidade = cor_discreta_severidade_prioridade(
+                set(universo_severidade.dropna().astype(str))
+            )
+            _plotar(
+                df_severidade, "Pizza", x="Severidade", y="Quantidade", chave="severidade",
+                mapa_cores_fixo=mapa_cores_severidade,
+                titulo="Distribuição por Severidade/Prioridade", secoes_pdf=secoes_pdf,
+            )
+        fila.adicionar(_sec_severidade)
 
     # ------------------------------------------------- Distribuição por Coluna do Board
     df_coluna_board_completo = analytics.distribuicao_coluna_board(df_filtrado, mapeamento)
     if df_coluna_board_completo is not None and not df_coluna_board_completo.empty:
-        st.markdown("**Distribuição por Coluna do Board (Kanban)**")
-        st.caption(
-            "Coluna do board **exatamente como veio do Azure DevOps** para cada item (campo "
-            "`System.BoardColumn`), sem lista fixa nem filtro do app — se o board do time tem "
-            "19 colunas próprias (Backlog, Em Refinamento de Negócios, ..., Finalizado), essas "
-            "19 aparecem aqui. Nomes batem com a lista oficial abaixo ignorando acento e "
-            "maiúscula/minúscula (ex.: 'pronto para qa' e 'Pronto Para QA' contam juntos); "
-            "colunas com nome próprio de algum time específico aparecem do mesmo jeito, só "
-            "ficam ordenadas depois das reconhecidas. As barras seguem a ordem real do fluxo "
-            "(Backlog → Finalizado), não a quantidade — assim dá pra ver o funil/gargalo. "
-            "Tipos de work item que não aparecem em nenhum board (ex.: Test Case, que vive em "
-            "Test Plans/Test Suites) herdam a coluna do item pai vinculado, quando existir esse "
-            "vínculo. Itens sem pai vinculado, ou cujo pai também não está em nenhuma coluna, "
-            "ficam sem Coluna do Board — esses itens **não entram neste gráfico nem no "
-            "cruzamento Area Path × Coluna do Board logo abaixo** (ver detalhamento por tipo no "
-            "expansor abaixo)."
-        )
-        with st.expander("Lista oficial de colunas usada para ordenar (não limita quais colunas aparecem)"):
-            st.write(", ".join(analytics.ORDEM_COLUNAS_BOARD))
-
-        df_detalhe_nao_atribuido = analytics.detalhamento_nao_atribuido_coluna_board(df_filtrado, mapeamento)
-        if df_detalhe_nao_atribuido is not None and not df_detalhe_nao_atribuido.empty:
-            with st.expander(
-                f"Por que {int(df_detalhe_nao_atribuido['Quantidade'].sum()):,}".replace(",", ".")
-                + ' item(ns) sem Coluna do Board não aparece(m) nos gráficos abaixo (ver por tipo)'
-            ):
-                st.caption(
-                    "Quebra, por Tipo de Work Item, dos itens sem Coluna do Board - excluídos "
-                    "dos dois gráficos abaixo. Ajuda a diferenciar as duas causas possíveis: "
-                    "**(a)** o tipo simplesmente nunca aparece em nenhum board no Azure DevOps "
-                    "(ex.: Test Case, que vive em Test Plans/Test Suites) e não tem um item pai "
-                    "vinculado pra herdar a coluna dele — nesse caso é o esperado, não é bug; "
-                    "**(b)** o tipo normalmente aparece no board (ex.: Bug, User Story, Task) mas "
-                    "mesmo assim veio sem coluna direto da API do Azure DevOps — o que costuma "
-                    "acontecer quando o Area Path do item não está associado a nenhum Time, ou o "
-                    "Time responsável não tem uma coluna mapeada pro State atual do item nas "
-                    "configurações do board dele (isso é configuração do lado do Azure DevOps, "
-                    "não algo que o app calcula)."
-                )
-                st.dataframe(df_detalhe_nao_atribuido, use_container_width=True, hide_index=True)
-
         df_para_graficos_coluna_board = analytics.excluir_nao_atribuido_coluna_board(df_filtrado, mapeamento)
         df_coluna_board = analytics.distribuicao_coluna_board(df_para_graficos_coluna_board, mapeamento)
 
-        col_board, _col_espaco_board = st.columns([1, 3])
-        with col_board:
-            tipo_board = _selecionar_tipo_grafico(
-                "coluna_board", ["Barras", "Barras Horizontais", "Pizza", "Rosca", "Treemap"]
+        def _sec_coluna_board() -> None:
+            st.markdown("**Distribuição por Coluna do Board (Kanban)**")
+            _explicacao(
+                "Coluna do board **exatamente como veio do Azure DevOps** para cada item (campo "
+                "`System.BoardColumn`), sem lista fixa nem filtro do app — se o board do time tem "
+                "19 colunas próprias (Backlog, Em Refinamento de Negócios, ..., Finalizado), essas "
+                "19 aparecem aqui. Nomes batem com a lista oficial abaixo ignorando acento e "
+                "maiúscula/minúscula (ex.: 'pronto para qa' e 'Pronto Para QA' contam juntos); "
+                "colunas com nome próprio de algum time específico aparecem do mesmo jeito, só "
+                "ficam ordenadas depois das reconhecidas. As barras seguem a ordem real do fluxo "
+                "(Backlog → Finalizado), não a quantidade — assim dá pra ver o funil/gargalo. "
+                "Tipos de work item que não aparecem em nenhum board (ex.: Test Case, que vive em "
+                "Test Plans/Test Suites) herdam a coluna do item pai vinculado, quando existir esse "
+                "vínculo. Itens sem pai vinculado, ou cujo pai também não está em nenhuma coluna, "
+                "ficam sem Coluna do Board — esses itens **não entram neste gráfico nem no "
+                "cruzamento Area Path × Coluna do Board logo abaixo** (ver detalhamento por tipo no "
+                "expansor abaixo)."
             )
-        if df_coluna_board is not None and not df_coluna_board.empty:
-            _plotar(
-                df_coluna_board, tipo_board, x="Coluna do Board", y="Quantidade", chave="coluna_board",
-                ordem_categorias={"Coluna do Board": analytics.ORDEM_COLUNAS_BOARD},
-                titulo="Distribuição por Coluna do Board (Kanban)", secoes_pdf=secoes_pdf,
-            )
-        else:
-            st.info('Nenhum item com Coluna do Board (fora de "Não atribuído(a)") para os filtros atuais.')
-        st.divider()
+            with st.expander("Lista oficial de colunas usada para ordenar (não limita quais colunas aparecem)"):
+                st.write(", ".join(analytics.ORDEM_COLUNAS_BOARD))
+
+            df_detalhe_nao_atribuido = analytics.detalhamento_nao_atribuido_coluna_board(df_filtrado, mapeamento)
+            if df_detalhe_nao_atribuido is not None and not df_detalhe_nao_atribuido.empty:
+                with st.expander(
+                    f"Por que {int(df_detalhe_nao_atribuido['Quantidade'].sum()):,}".replace(",", ".")
+                    + ' item(ns) sem Coluna do Board não aparece(m) nos gráficos abaixo (ver por tipo)'
+                ):
+                    st.caption(
+                        "Quebra, por Tipo de Work Item, dos itens sem Coluna do Board - excluídos "
+                        "dos dois gráficos abaixo. Ajuda a diferenciar as duas causas possíveis: "
+                        "**(a)** o tipo simplesmente nunca aparece em nenhum board no Azure DevOps "
+                        "(ex.: Test Case, que vive em Test Plans/Test Suites) e não tem um item pai "
+                        "vinculado pra herdar a coluna dele — nesse caso é o esperado, não é bug; "
+                        "**(b)** o tipo normalmente aparece no board (ex.: Bug, User Story, Task) mas "
+                        "mesmo assim veio sem coluna direto da API do Azure DevOps — o que costuma "
+                        "acontecer quando o Area Path do item não está associado a nenhum Time, ou o "
+                        "Time responsável não tem uma coluna mapeada pro State atual do item nas "
+                        "configurações do board dele (isso é configuração do lado do Azure DevOps, "
+                        "não algo que o app calcula)."
+                    )
+                    st.dataframe(df_detalhe_nao_atribuido, use_container_width=True, hide_index=True)
+
+            col_board, _col_espaco_board = st.columns([1, 3])
+            with col_board:
+                tipo_board = _selecionar_tipo_grafico(
+                    "coluna_board", ["Barras", "Barras Horizontais", "Pizza", "Rosca", "Treemap"]
+                )
+            if df_coluna_board is not None and not df_coluna_board.empty:
+                _plotar(
+                    df_coluna_board, tipo_board, x="Coluna do Board", y="Quantidade", chave="coluna_board",
+                    ordem_categorias={"Coluna do Board": analytics.ORDEM_COLUNAS_BOARD},
+                    titulo="Distribuição por Coluna do Board (Kanban)", secoes_pdf=secoes_pdf,
+                )
+            else:
+                st.info('Nenhum item com Coluna do Board (fora de "Não atribuído(a)") para os filtros atuais.')
+        fila.adicionar(_sec_coluna_board)
 
         # --------------------------------------------- Area Path × Coluna do Board
         df_area_x_board = analytics.distribuicao_area_path_x_coluna_board(
             df_para_graficos_coluna_board, mapeamento
         )
         if df_area_x_board is not None and not df_area_x_board.empty:
-            st.markdown("**Area Path × Coluna do Board**")
-            st.caption(
-                "Cruza Projeto/Area Path com a coluna do board — mostra quantos itens de cada "
-                "Area Path estão parados em cada coluna, na ordem real do fluxo (Backlog → "
-                "Finalizado), em vez de só o total geral por coluna. Ajuda a enxergar onde "
-                "exatamente está o gargalo: por exemplo, um Area Path específico acumulando "
-                'muito item numa coluna só. Também não inclui itens "Não atribuído(a)" (ver '
-                "detalhamento acima)."
-            )
-            col_area_board, _col_espaco_area_board = st.columns([1, 3])
-            with col_area_board:
-                tipo_area_board = _selecionar_tipo_grafico(
-                    "area_path_coluna_board", ["Barras", "Barras Horizontais", "Treemap"]
+            def _sec_area_coluna_board() -> None:
+                st.markdown("**Area Path × Coluna do Board**")
+                _explicacao(
+                    "Cruza Projeto/Area Path com a coluna do board — mostra quantos itens de cada "
+                    "Area Path estão parados em cada coluna, na ordem real do fluxo (Backlog → "
+                    "Finalizado), em vez de só o total geral por coluna. Ajuda a enxergar onde "
+                    "exatamente está o gargalo: por exemplo, um Area Path específico acumulando "
+                    'muito item numa coluna só. Também não inclui itens "Não atribuído(a)" (ver '
+                    "detalhamento acima)."
                 )
-            _plotar(
-                df_area_x_board, tipo_area_board, x="Projeto", y="Quantidade",
-                chave="area_path_coluna_board", cor="Coluna do Board",
-                ordem_categorias={"Coluna do Board": analytics.ORDEM_COLUNAS_BOARD},
-                titulo="Area Path × Coluna do Board", secoes_pdf=secoes_pdf,
-            )
-            st.divider()
+                col_area_board, _col_espaco_area_board = st.columns([1, 3])
+                with col_area_board:
+                    tipo_area_board = _selecionar_tipo_grafico(
+                        "area_path_coluna_board", ["Barras", "Barras Horizontais", "Treemap"]
+                    )
+                _plotar(
+                    df_area_x_board, tipo_area_board, x="Projeto", y="Quantidade",
+                    chave="area_path_coluna_board", cor="Coluna do Board",
+                    ordem_categorias={"Coluna do Board": analytics.ORDEM_COLUNAS_BOARD},
+                    titulo="Area Path × Coluna do Board", secoes_pdf=secoes_pdf,
+                )
+            fila.adicionar(_sec_area_coluna_board)
 
         # ------------------------------------------------- Prioridade no Board
+        # Tabela (não gráfico) - largura total, então esvazia a fila antes.
+        fila.flush()
         df_prioridade_board = analytics.ranking_prioridade_board(df_filtrado, mapeamento)
         if df_prioridade_board is not None and not df_prioridade_board.empty:
             st.markdown("**Prioridade Dentro do Board**")
-            st.caption(
+            _explicacao(
                 "Ranking dos itens em aberto, na ordem real de cima para baixo dentro de cada "
                 "coluna do board (Posição 1 = topo da coluna = maior prioridade) - usa o campo "
                 "oculto do Azure DevOps (Stack Rank/Backlog Priority) que controla essa ordem "
@@ -805,35 +967,43 @@ def render_dashboard_page() -> None:
             # ------------------------------------------- Severidade Calculada (posição no board)
             df_severidade_calculada = analytics.distribuicao_severidade_calculada(df_filtrado, mapeamento)
             if df_severidade_calculada is not None and df_severidade_calculada["Quantidade"].sum() > 0:
-                st.markdown("**Severidade Calculada (posição no board)**")
-                st.caption(
-                    "Gráfico novo, separado do campo manual \"Severity\" (ver **Distribuição por "
-                    "Severidade/Prioridade** acima, que continua igual) - aqui a severidade é "
-                    "CALCULADA a partir de onde cada item em aberto está posicionado dentro da "
-                    "própria Coluna do Board, do topo (mais grave) para o fundo (menos grave), de "
-                    "forma proporcional ao tamanho de cada coluna: uma coluna com só 2 itens não "
-                    "joga os dois para \"Crítica\" - o 1º fica \"Crítica\" e o 2º \"Média\", por "
-                    "exemplo -, e colunas maiores se espalham pelos 4 níveis "
-                    f"({', '.join(analytics.NIVEIS_SEVERIDADE_CALCULADA)}). Usa a mesma base de "
-                    "dados do ranking acima (Stack Rank/Backlog Priority)."
-                )
-                col_sev_calc, _col_espaco_sev_calc = st.columns([1, 3])
-                with col_sev_calc:
-                    tipo_severidade_calculada = _selecionar_tipo_grafico(
-                        "severidade_calculada", ["Pizza", "Rosca", "Barras", "Barras Horizontais"]
+                def _sec_severidade_calculada() -> None:
+                    st.markdown("**Severidade Calculada (posição no board)**")
+                    _explicacao(
+                        "Gráfico novo, separado do campo manual \"Severity\" (ver **Distribuição por "
+                        "Severidade/Prioridade** acima, que continua igual) - aqui a severidade é "
+                        "CALCULADA a partir de onde cada item em aberto está posicionado dentro da "
+                        "própria Coluna do Board, do topo (mais grave) para o fundo (menos grave), de "
+                        "forma proporcional ao tamanho de cada coluna: uma coluna com só 2 itens não "
+                        "joga os dois para \"Crítica\" - o 1º fica \"Crítica\" e o 2º \"Média\", por "
+                        "exemplo -, e colunas maiores se espalham pelos 4 níveis "
+                        f"({', '.join(analytics.NIVEIS_SEVERIDADE_CALCULADA)}). Usa a mesma base de "
+                        "dados do ranking acima (Stack Rank/Backlog Priority). Sempre com o mesmo "
+                        "esquema de cores (Crítica=vermelho, Alta=amarelo, Média=verde, "
+                        "Baixa=azul), começando no formato rosca."
                     )
-                _plotar(
-                    df_severidade_calculada, tipo_severidade_calculada,
-                    x="Severidade Calculada", y="Quantidade", chave="severidade_calculada",
-                    ordem_categorias={"Severidade Calculada": list(analytics.NIVEIS_SEVERIDADE_CALCULADA)},
-                    titulo="Severidade Calculada (posição no board)", secoes_pdf=secoes_pdf,
-                )
-                with st.expander("Ver detalhamento item a item da Severidade Calculada", expanded=False):
-                    st.dataframe(
-                        analytics.severidade_calculada_por_posicao(df_filtrado, mapeamento),
-                        use_container_width=True,
+                    col_sev_calc, _col_espaco_sev_calc = st.columns([1, 3])
+                    with col_sev_calc:
+                        tipo_severidade_calculada = _selecionar_tipo_grafico(
+                            "severidade_calculada", ["Rosca", "Pizza", "Barras", "Barras Horizontais"]
+                        )
+                    mapa_cores_severidade_calculada = cor_discreta_criticidade(
+                        set(df_severidade_calculada["Severidade Calculada"]),
+                        ordem_conhecida=list(analytics.NIVEIS_SEVERIDADE_CALCULADA),
                     )
-                st.divider()
+                    _plotar(
+                        df_severidade_calculada, tipo_severidade_calculada,
+                        x="Severidade Calculada", y="Quantidade", chave="severidade_calculada",
+                        ordem_categorias={"Severidade Calculada": list(analytics.NIVEIS_SEVERIDADE_CALCULADA)},
+                        mapa_cores_fixo=mapa_cores_severidade_calculada,
+                        titulo="Severidade Calculada (posição no board)", secoes_pdf=secoes_pdf,
+                    )
+                    with st.expander("Ver detalhamento item a item da Severidade Calculada", expanded=False):
+                        st.dataframe(
+                            analytics.severidade_calculada_por_posicao(df_filtrado, mapeamento),
+                            use_container_width=True,
+                        )
+                fila.adicionar(_sec_severidade_calculada)
         elif mapeamento.coluna_board and not mapeamento.prioridade_board:
             st.caption(
                 "💡 Este arquivo não tem o campo de prioridade por posição no board mapeado - "
@@ -843,65 +1013,73 @@ def render_dashboard_page() -> None:
 
     # ------------------------------------------------- Volume de Testes por Responsável
     if mapeamento.responsavel and mapeamento.responsavel in df_filtrado.columns:
-        st.markdown("**Volume de Testes por Responsável**")
-        projeto_disponivel_responsavel = bool(mapeamento.projeto and mapeamento.projeto in df_filtrado.columns)
-        col_agrupar, col_tipo_resp, _col_espaco = st.columns([1.4, 1, 2])
-        with col_agrupar:
-            agrupar_por_projeto = st.checkbox(
-                "Agrupar por Projeto",
-                value=projeto_disponivel_responsavel,
-                key="volume_responsavel_agrupar_projeto",
-                disabled=not projeto_disponivel_responsavel,
-                help=(
-                    "Divide a barra de cada Responsável pelos Projetos em que atuou, em vez de "
-                    "mostrar só o total."
-                ),
+        def _sec_volume_responsavel() -> None:
+            st.markdown("**Volume de Testes por Responsável**")
+            projeto_disponivel_responsavel = bool(mapeamento.projeto and mapeamento.projeto in df_filtrado.columns)
+            col_agrupar, col_tipo_resp, _col_espaco = st.columns([1.4, 1, 2])
+            with col_agrupar:
+                agrupar_por_projeto = st.checkbox(
+                    "Agrupar por Projeto",
+                    value=projeto_disponivel_responsavel,
+                    key="volume_responsavel_agrupar_projeto",
+                    disabled=not projeto_disponivel_responsavel,
+                    help=(
+                        "Divide a barra de cada Responsável pelos Projetos em que atuou, em vez de "
+                        "mostrar só o total."
+                    ),
+                )
+            with col_tipo_resp:
+                tipo_volume_responsavel = _selecionar_tipo_grafico(
+                    "volume_responsavel", ["Barras", "Barras Horizontais", "Treemap", "Pizza", "Rosca"]
+                )
+            df_volume_responsavel = analytics.volume_por_responsavel(
+                df_filtrado,
+                mapeamento,
+                agrupar_por_projeto=agrupar_por_projeto and projeto_disponivel_responsavel,
             )
-        with col_tipo_resp:
-            tipo_volume_responsavel = _selecionar_tipo_grafico(
-                "volume_responsavel", ["Barras", "Barras Horizontais", "Treemap", "Pizza", "Rosca"]
-            )
-        df_volume_responsavel = analytics.volume_por_responsavel(
-            df_filtrado,
-            mapeamento,
-            agrupar_por_projeto=agrupar_por_projeto and projeto_disponivel_responsavel,
-        )
-        if df_volume_responsavel is not None and not df_volume_responsavel.empty:
-            _plotar(
-                df_volume_responsavel, tipo_volume_responsavel, x="Responsável", y="Quantidade",
-                chave="volume_responsavel",
-                cor="Projeto" if "Projeto" in df_volume_responsavel.columns else None,
-                titulo="Volume de Testes por Responsável", secoes_pdf=secoes_pdf,
-            )
-        else:
-            st.info("Sem dados suficientes de Responsável para montar este gráfico.")
-        st.divider()
+            if df_volume_responsavel is not None and not df_volume_responsavel.empty:
+                _plotar(
+                    df_volume_responsavel, tipo_volume_responsavel, x="Responsável", y="Quantidade",
+                    chave="volume_responsavel",
+                    cor="Projeto" if "Projeto" in df_volume_responsavel.columns else None,
+                    titulo="Volume de Testes por Responsável", secoes_pdf=secoes_pdf,
+                )
+            else:
+                st.info("Sem dados suficientes de Responsável para montar este gráfico.")
+        fila.adicionar(_sec_volume_responsavel)
 
     # ------------------------------------------------- Volume por Responsável ao longo do tempo
     df_volume_tempo, volume_tempo_truncado = analytics.volume_responsavel_por_semana(df_filtrado, mapeamento)
     if df_volume_tempo is not None and not df_volume_tempo.empty:
-        st.markdown("**Volume por Responsável ao Longo do Tempo**")
-        st.caption(
-            "Acumulado por semana (não por dia) - o volume individual por dia costuma ser baixo, "
-            "o que deixaria a linha muito irregular e dominada pelo dia da semana, escondendo o "
-            "padrão real de ritmo de cada pessoa. Mostra a soma de todos os Projetos que estiverem "
-            "marcados no filtro **Projeto** da barra lateral — para ver a tendência de um Projeto "
-            "específico, marque só ele lá."
-        )
-        col_tipo_volume_tempo, _col_espaco = st.columns([1, 3])
-        with col_tipo_volume_tempo:
-            tipo_volume_tempo = _selecionar_tipo_grafico("volume_responsavel_tempo", ["Linha", "Área", "Barras"])
-        _plotar(
-            df_volume_tempo, tipo_volume_tempo, x="Semana", y="Quantidade",
-            chave="volume_responsavel_tempo", cor="Responsável",
-            titulo="Volume por Responsável ao Longo do Tempo", secoes_pdf=secoes_pdf,
-        )
-        if volume_tempo_truncado:
-            st.caption(
-                "Mostrando só as 8 pessoas com mais registros no período (mais que isso deixaria "
-                "o gráfico ilegível, com muitas linhas/cores se cruzando)."
+        def _sec_volume_responsavel_tempo() -> None:
+            st.markdown("**Volume por Responsável ao Longo do Tempo**")
+            _explicacao(
+                "Acumulado por semana (não por dia) - o volume individual por dia costuma ser baixo, "
+                "o que deixaria a linha muito irregular e dominada pelo dia da semana, escondendo o "
+                "padrão real de ritmo de cada pessoa. Mostra a soma de todos os Projetos que estiverem "
+                "marcados no filtro **Projeto** da barra lateral — para ver a tendência de um Projeto "
+                "específico, marque só ele lá."
             )
-        st.divider()
+            col_tipo_volume_tempo, _col_espaco = st.columns([1, 3])
+            with col_tipo_volume_tempo:
+                tipo_volume_tempo = _selecionar_tipo_grafico("volume_responsavel_tempo", ["Linha", "Área", "Barras"])
+            _plotar(
+                df_volume_tempo, tipo_volume_tempo, x="Semana", y="Quantidade",
+                chave="volume_responsavel_tempo", cor="Responsável",
+                titulo="Volume por Responsável ao Longo do Tempo", secoes_pdf=secoes_pdf,
+            )
+            if volume_tempo_truncado:
+                st.caption(
+                    "Mostrando só as 8 pessoas com mais registros no período (mais que isso deixaria "
+                    "o gráfico ilegível, com muitas linhas/cores se cruzando)."
+                )
+        fila.adicionar(_sec_volume_responsavel_tempo)
+
+    # Fecha qualquer gráfico ainda pendente (ex.: um número ímpar de seções
+    # nesta página/nestes filtros) antes do construtor de gráfico
+    # personalizado, que fica sempre em largura total (é uma seção diferente,
+    # com sua própria grade de controles, não faz parte da galeria acima).
+    fila.flush()
 
     # ------------------------------------------------- Construtor de gráfico personalizado
     _renderizar_construtor_grafico_personalizado(df_filtrado, mapeamento, secoes_pdf=secoes_pdf)
@@ -970,7 +1148,7 @@ def render_dashboard_page() -> None:
                 )
                 st.session_state["pdf_relatorio_bytes"] = pdf_bytes
                 st.session_state["pdf_relatorio_nome"] = (
-                    f"relatorio_qa_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
+                    f"relatorio_qa_{agora_brasilia().strftime('%Y%m%d_%H%M')}.pdf"
                 )
         except ErroGeracaoPdf as erro:
             # Erro "amigável" - mensagem já pronta pra exibir direto, sem

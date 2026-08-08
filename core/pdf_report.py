@@ -30,7 +30,6 @@ detalhado logo acima de `_chrome_download_ok`, abaixo.
 from __future__ import annotations
 
 import io
-from datetime import datetime
 from typing import Any, Optional
 
 import kaleido
@@ -48,6 +47,8 @@ from reportlab.platypus import (
     Table,
     TableStyle,
 )
+
+from core.fuso_horario import agora_brasilia
 
 # Mesma paleta "de marca" de `ui/theme.py` (não importa de lá de propósito -
 # este módulo não depende de Streamlit/da camada de UI, só de reportlab/
@@ -286,7 +287,7 @@ def gerar_pdf_relatorio(
     elementos.append(Paragraph("Refuturiza QA", estilos["subtitulo_capa"]))
     elementos.append(Spacer(1, 10))
 
-    agora = datetime.now().strftime("%d/%m/%Y às %H:%M")
+    agora = agora_brasilia().strftime("%d/%m/%Y às %H:%M")
     linhas_cabecalho = [
         f"Gerado em: {agora}",
         f"Arquivo de origem: {nome_arquivo_origem}",

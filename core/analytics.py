@@ -18,6 +18,7 @@ from typing import Optional
 
 import pandas as pd
 
+from core.fuso_horario import agora_brasilia
 from core.column_mapper import (
     MapeamentoColunas,
     eh_status_binario_reconhecivel,
@@ -887,7 +888,7 @@ def calcular_backlog_aberto(
     if len(indices_abertos) == 0:
         return IndicadoresBacklogAberto(0, None, None, 0, 0, 0)
 
-    hoje = pd.Timestamp(datetime.now().date())
+    hoje = pd.Timestamp(agora_brasilia().date())
     idade_dias = (hoje - datas.loc[indices_abertos]).dt.days
 
     return IndicadoresBacklogAberto(
@@ -917,7 +918,7 @@ def ranking_itens_mais_antigos_abertos(
     if trabalho.empty:
         return pd.DataFrame(columns=["Status", "Responsável", "Idade (dias)"])
 
-    hoje = pd.Timestamp(datetime.now().date())
+    hoje = pd.Timestamp(agora_brasilia().date())
     trabalho["Idade (dias)"] = (hoje - datas.loc[trabalho.index]).dt.days
     trabalho["Status"] = (
         trabalho["__status_bruto__"] if "__status_bruto__" in trabalho.columns else trabalho[mapeamento.status]

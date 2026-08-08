@@ -7,6 +7,7 @@ from typing import Optional
 import streamlit as st
 
 from auth.auth_manager import AuthManager
+from core.fuso_horario import formatar_data_hora_brasil
 from core.logs_sistema import (
     ROTULOS_TIPO_LOG,
     TIPO_ERRO,
@@ -213,26 +214,45 @@ def _renderizar_secao_logs() -> None:
     with aba_painel:
         _renderizar_aba_log(TIPO_PAINEL)
     with aba_erro:
-        _renderizar_aba_log(TIPO_ERRO, mostrar_detalhes=True)
+        _renderizar_aba_log(TIPO_ERRO, mostrar_detalhes_padrao=True)
     with aba_login:
         _renderizar_aba_log(TIPO_LOGIN)
 
 
-def _renderizar_aba_log(tipo: str, mostrar_detalhes: bool = False) -> None:
+def _renderizar_aba_log(tipo: str, mostrar_detalhes_padrao: bool = False) -> None:
     """
-    Desenha uma aba de log: seletor de quantas entradas mostrar, botão de
-    atualizar, a lista em si (tabela, ou cartões expansíveis quando
-    `mostrar_detalhes=True` - usado só em "Erros Técnicos", porque o campo
-    `detalhes` costuma trazer um traceback longo, que polui uma tabela) e,
-    por último, a limpeza de entradas antigas.
+    Desenha uma aba de log: seletor de quantas entradas mostrar, o toggle
+    "Ver com detalhes", botão de atualizar, a lista em si (tabela compacta,
+    ou um cartão expansível por entrada com o texto INTEIRO, sem cortar,
+    quando "Ver com detalhes" está marcado) e, por último, a limpeza de
+    entradas antigas.
+
+    `mostrar_detalhes_padrao`: só controla o valor INICIAL do toggle - em
+    "Erros Técnicos" já começa marcado, porque o campo `detalhes` costuma
+    trazer um traceback longo, que polui a tabela compacta; nas outras abas
+    começa desmarcado, mas a pessoa pode ligar o toggle a qualquer momento -
+    por exemplo, pra ler sem cortes uma mensagem longa em "Ações no Painel"
+    (como as de download via PAT do Azure DevOps, que têm bastante texto).
     """
-    col_limite, col_atualizar = st.columns([3, 1])
+    col_limite, col_detalhes, col_atualizar = st.columns([2.2, 1.4, 1])
     with col_limite:
         limite = st.select_slider(
             "Quantas entradas mais recentes mostrar",
             options=[50, 100, 200, 500],
             value=100,
             key=f"logs_limite_{tipo}",
+        )
+    with col_detalhes:
+        st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+        mostrar_detalhes = st.checkbox(
+            "Ver com detalhes",
+            value=mostrar_detalhes_padrao,
+            key=f"logs_detalhes_{tipo}",
+            help=(
+                "Mostra cada entrada em um cartão separado, com o texto completo da "
+                "mensagem (sem cortar) - útil quando a tabela compacta corta o texto "
+                "da coluna Mensagem."
+            ),
         )
     with col_atualizar:
         st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
@@ -252,18 +272,41 @@ def _renderizar_aba_log(tipo: str, mostrar_detalhes: bool = False) -> None:
 
         if mostrar_detalhes:
             for log in logs:
-                with st.expander(f"{log.criado_em} (UTC) · {log.mensagem}"):
+                with st.expander(f"{formatar_data_hora_brasil(log.criado_em)} · {log.mensagem}"):
                     st.caption(f"Usuário: {log.usuario or '—'}")
                     if log.detalhes:
                         st.code(log.detalhes, language="text")
         else:
+            # `column_config` força "Mensagem" a ficar bem mais larga que
+            # "Data/Hora"/"Usuário" (que são sempre curtas) - sem isso, a
+            # tabela dividia a largura em 3 partes quase iguais e cortava o
+            # texto da mensagem sem dar nenhum jeito de ler o resto (nem
+            # scroll horizontal aparecia, porque a soma das colunas ainda
+            # cabia na largura do container). Com "Mensagem" bem mais larga
+            # que o espaço visível, a própria grade do Streamlit passa a
+            # mostrar uma barra de rolagem horizontal - e a coluna, sendo
+            # mais larga, mostra bem mais texto de cada vez mesmo sem rolar.
             st.dataframe(
                 [
-                    {"Data/Hora (UTC)": log.criado_em, "Usuário": log.usuario or "—", "Mensagem": log.mensagem}
+                    {
+                        "Data/Hora": formatar_data_hora_brasil(log.criado_em),
+                        "Usuário": log.usuario or "—",
+                        "Mensagem": log.mensagem,
+                    }
                     for log in logs
                 ],
                 use_container_width=True,
                 hide_index=True,
+                column_config={
+                    "Data/Hora": st.column_config.TextColumn(width="small"),
+                    "Usuário": st.column_config.TextColumn(width="small"),
+                    "Mensagem": st.column_config.TextColumn(width="large"),
+                },
+            )
+            st.caption(
+                "💡 Mensagem cortada? Arraste a barra de rolagem horizontal "
+                "logo abaixo da tabela (ou marque \"Ver com detalhes\" acima "
+                "pra ver cada entrada sem nenhum corte)."
             )
 
     with st.expander("Limpar entradas antigas"):
@@ -453,7 +496,7 @@ def _renderizar_cartao_solicitacao(
             col_info, col_acoes = st.columns([3, 1])
         with col_info:
             st.markdown(f"**{solicitacao.nome}** · {solicitacao.email}")
-            st.caption(f"Recebida em {solicitacao.criado_em} (UTC)")
+            st.caption(f"Recebida em {formatar_data_hora_brasil(solicitacao.criado_em)}")
             if solicitacao.justificativa:
                 st.write(solicitacao.justificativa)
         if mostrar_acoes_pendente:

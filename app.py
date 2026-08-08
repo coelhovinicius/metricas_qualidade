@@ -28,7 +28,7 @@ import streamlit as st
 
 from auth.auth_manager import AuthManager
 from core.logs_sistema import TIPO_ERRO, registrar_log
-from ui.components import action_button, finish_action, loading_overlay
+from ui.components import action_button, finish_action, loading_overlay, rolar_para_topo
 from ui.pages.admin_page import render_admin_page, usuario_e_admin
 from ui.pages.dashboard_page import render_dashboard_page
 from ui.pages.login_page import render_login_page
@@ -99,6 +99,37 @@ def _renderizar_sidebar_navegacao(auth_manager: AuthManager) -> None:
             st.rerun()
 
 
+_CHAVE_ULTIMA_TELA_SCROLL_TOPO = "_tela_anterior_scroll_topo"
+
+
+def _rolar_para_topo_se_mudou_de_tela(identificador_tela: str) -> None:
+    """
+    Sempre que a TELA muda de verdade, rola a janela pro topo - sem isso, se
+    a pessoa tiver rolado pra baixo numa tela (ex.: até o fim do dashboard) e
+    a tela seguinte for outro conteúdo, ela carrega já rolada pra baixo, o
+    que confunde (ex.: cai no meio do formulário de importação sem ver o
+    topo dele, ou na tela de login sem ver o cabeçalho). "Mudar de tela"
+    cobre TODAS as transições de tela do app, não só o menu lateral:
+        - login <-> app autenticado (entrar OU sair/"Sair");
+        - trocar de página no menu lateral (Importar Dados/Indicadores/
+          Administração).
+    NÃO dispara em reruns dentro da MESMA tela (ex.: mudar um filtro no
+    dashboard, marcar uma coluna no construtor de gráfico, errar a senha e
+    tentar de novo na tela de login) - só compara a tela atual com a última
+    em que este rolamento já rodou, guardada em `st.session_state`. Cada
+    chamador (ver `main()`, abaixo) passa um `identificador_tela` diferente
+    por tela: "login" pra tela de login, ou o valor de `pagina_atual`
+    (chave já usada pela navegação) pras páginas do app autenticado - como
+    os dois conjuntos de valores nunca se repetem entre si, a comparação
+    simples de igualdade já cobre a transição login <-> app de graça, sem
+    precisar de nenhum controle extra.
+    """
+    if st.session_state.get(_CHAVE_ULTIMA_TELA_SCROLL_TOPO) == identificador_tela:
+        return
+    st.session_state[_CHAVE_ULTIMA_TELA_SCROLL_TOPO] = identificador_tela
+    rolar_para_topo()
+
+
 @st.dialog("Nova Análise")
 def _confirmar_nova_analise() -> None:
     st.warning(
@@ -152,6 +183,7 @@ def main() -> None:
     auth_manager = AuthManager()
 
     if not AuthManager.is_authenticated():
+        _rolar_para_topo_se_mudou_de_tela("login")
         render_login_page(auth_manager)
         return
 
@@ -159,6 +191,7 @@ def main() -> None:
     _renderizar_botao_nova_analise()
 
     pagina_atual = st.session_state["pagina_atual"]
+    _rolar_para_topo_se_mudou_de_tela(pagina_atual)
     try:
         if pagina_atual == "upload":
             render_upload_page()

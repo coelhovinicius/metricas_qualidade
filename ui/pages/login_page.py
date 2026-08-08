@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 from auth.auth_manager import AuthManager
 from core.solicitacoes_conta import existe_solicitacao_pendente_com_email, registrar_solicitacao
@@ -41,6 +42,7 @@ def render_login_page(auth_manager: AuthManager) -> None:
             # st.form) -> texto de contato + botão "Solicitar acesso", por
             # último.
             nome, status_autenticacao, username = auth_manager.render_login_form()
+            _focar_campo_usuario()
 
             if status_autenticacao is False:
                 st.error("Usuário ou senha incorretos. Tente novamente, ou entre em contato com o administrador do sistema.")
@@ -51,6 +53,50 @@ def render_login_page(auth_manager: AuthManager) -> None:
                 "Caso não tenha uma conta, entre em contato com o administrador do sistema."
             )
             _renderizar_botao_solicitacao_conta()
+
+
+def _focar_campo_usuario() -> None:
+    """
+    Pré-posiciona o cursor no campo "Usuário" assim que a tela de login
+    carrega, pra a pessoa poder digitar direto sem precisar clicar no campo
+    primeiro.
+
+    `st.markdown(..., unsafe_allow_html=True)` NÃO executa `<script>` (o
+    Streamlit sanitiza) - só `st.components.v1.html(...)` roda de verdade,
+    porque desenha um iframe de componente próprio. O script roda DENTRO
+    desse iframe, então precisa mirar `window.top` (a janela de verdade do
+    navegador) pra alcançar o formulário de login, que está fora do iframe -
+    mesma técnica já usada em `auth/auth_manager.py`
+    (`_forcar_logout_ao_fechar_navegador`). O formulário em si é montado pela
+    lib `streamlit-authenticator` (não por este código), então o campo é
+    localizado de forma genérica - primeiro campo de texto dentro do
+    formulário (`div[data-testid="stForm"]`) - em vez de depender de algum
+    id/classe interna dela. Tenta por até ~2s (20 tentativas de 100ms) caso o
+    formulário ainda não tenha terminado de aparecer no DOM no instante em
+    que o script roda.
+    """
+    components.html(
+        """
+        <script>
+        (function() {
+            function focarCampoUsuario(tentativasRestantes) {
+                var doc = window.top.document;
+                var formulario = doc.querySelector('div[data-testid="stForm"]');
+                var campo = formulario ? formulario.querySelector('input[type="text"], input:not([type])') : null;
+                if (campo) {
+                    campo.focus();
+                    return;
+                }
+                if (tentativasRestantes > 0) {
+                    setTimeout(function() { focarCampoUsuario(tentativasRestantes - 1); }, 100);
+                }
+            }
+            focarCampoUsuario(20);
+        })();
+        </script>
+        """,
+        height=0,
+    )
 
 
 def _renderizar_botao_solicitacao_conta() -> None:

@@ -28,6 +28,8 @@ from typing import Optional
 import pandas as pd
 import requests
 
+from core.fuso_horario import FUSO_BRASILIA
+
 API_VERSION = "7.1"
 TAMANHO_LOTE = 200  # limite de IDs por chamada da API de workitemsbatch
 TIMEOUT_SEGUNDOS = 30
@@ -192,6 +194,59 @@ def _get(url: str, pat: str) -> dict:
         raise AzureDevOpsError(f"Não foi possível conectar ao Azure DevOps: {exc}") from exc
     _tratar_erro_http(resposta)
     return _decodificar_json(resposta)
+
+
+def obter_identidade_autenticada(organization: str, pat: str) -> Optional[str]:
+    """
+    Descobre o nome de exibição da identidade do Azure DevOps DONA do PAT
+    informado. Como cada usuário deste app usa o próprio PAT (nunca uma
+    conta de serviço compartilhada - ver docstring do módulo), isso dá
+    rastreabilidade real de QUEM (qual conta do Azure DevOps) trouxe cada
+    busca de dados - usado em `ui/pages/upload_page.py` só para log/
+    auditoria (tela Administração → Logs do Sistema).
+
+    Tenta duas fontes, nesta ordem:
+
+    1) API de Perfil (`vssps.dev.azure.com/{org}/_apis/profile/profiles/me`)
+       - é a forma documentada e confiável de perguntar "quem sou eu" pra
+       uma credencial (PAT/Basic Auth), e sempre devolve `displayName`
+       preenchido quando a autenticação é aceita. É a fonte PRIMÁRIA porque,
+       na prática, é a que realmente funciona com PAT.
+    2) API "Connection Data" (`dev.azure.com/{org}/_apis/connectionData`),
+       como reserva - em algumas organizações essa API devolve
+       `authenticatedUser.customDisplayName`/`providerDisplayName` vazios
+       mesmo com um PAT válido (é um campo pensado pra login interativo via
+       navegador, não pra Basic Auth) - por isso não é mais usada sozinha:
+       na prática ela é a causa mais comum de "não identificado" aparecer
+       sempre, mesmo com o PAT funcionando normalmente pra buscar os itens.
+
+    Nunca levanta `AzureDevOpsError`: é um dado auxiliar, não vale a pena
+    arriscar quebrar a busca de work items em si (o que importa de verdade)
+    só porque essa chamada extra falhou por algum motivo - devolve `None`
+    nesse caso, e quem chamar decide o que mostrar no lugar.
+    """
+    if not organization or not pat:
+        return None
+
+    url_perfil = (
+        f"https://vssps.dev.azure.com/{organization}/_apis/profile/profiles/me"
+        f"?api-version={API_VERSION}"
+    )
+    try:
+        perfil = _get(url_perfil, pat)
+        nome = perfil.get("displayName")
+        if nome:
+            return nome
+    except AzureDevOpsError:
+        pass
+
+    url_connection_data = f"https://dev.azure.com/{organization}/_apis/connectionData?api-version={API_VERSION}"
+    try:
+        corpo = _get(url_connection_data, pat)
+    except AzureDevOpsError:
+        return None
+    usuario_autenticado = corpo.get("authenticatedUser") or {}
+    return usuario_autenticado.get("customDisplayName") or usuario_autenticado.get("providerDisplayName")
 
 
 def listar_projetos(organization: str, pat: str) -> list[Projeto]:
@@ -416,13 +471,17 @@ def _formatar_pessoa(valor: Optional[dict]) -> Optional[str]:
 
 
 def _formatar_data(valor: Optional[str]) -> Optional[str]:
-    """Converte o timestamp ISO 8601 da API pro mesmo formato dd/mm/aaaa hh:mm:ss do export manual."""
+    """
+    Converte o timestamp ISO 8601 da API (sempre em UTC) pro mesmo formato
+    dd/mm/aaaa hh:mm:ss do export manual - já convertido pro horário de
+    Brasília (UTC-3), igual ao resto do app (ver `core/fuso_horario.py`).
+    """
     if not valor:
         return None
     data = pd.to_datetime(valor, errors="coerce", utc=True)
     if pd.isna(data):
         return valor
-    return data.strftime("%d/%m/%Y %H:%M:%S")
+    return data.tz_convert(FUSO_BRASILIA).strftime("%d/%m/%Y %H:%M:%S")
 
 
 def _montar_dataframe(itens_api: list[dict]) -> pd.DataFrame:

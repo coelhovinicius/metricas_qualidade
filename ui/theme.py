@@ -8,6 +8,10 @@ visualmente consistentes com o tema nativo do Streamlit.
 
 from __future__ import annotations
 
+import re
+import unicodedata
+from typing import Optional
+
 import streamlit as st
 
 from core.analytics import ORDEM_COLUNAS_BOARD
@@ -146,6 +150,233 @@ def cor_discreta_coluna_board(valores_presentes) -> dict[str, str]:
         else:
             mapa[valor] = PALETA_COLORIDA[indice_extra % len(PALETA_COLORIDA)]
         indice_extra += 1
+    return mapa
+
+
+# ==============================================================================
+# Esquema de cores fixo para indicadores de CRITICIDADE (severidade/prioridade)
+# ==============================================================================
+# Pedido explícito: ao contrário de PALETA_COLORIDA (cor por POSIÇÃO, sem
+# significado), aqui a cor tem que ter sempre o mesmo SIGNIFICADO em
+# qualquer indicador que meça criticidade, no app inteiro:
+#   Crítica/maior criticidade -> sempre vermelho
+#   Alta                      -> sempre amarelo
+#   Média                     -> sempre verde
+#   Baixa/menor criticidade   -> sempre azul (só existe com 4 níveis)
+# As cores usadas são as mesmas de PALETA_COLORIDA (vermelho/amarelo/verde/
+# azul já presentes nela), só reordenadas por significado em vez de posição.
+
+_VERMELHO_CRITICIDADE = "#E63946"
+_AMARELO_CRITICIDADE = "#F4C430"
+_VERDE_CRITICIDADE = "#1DB954"
+_AZUL_CRITICIDADE = "#2A78D6"
+
+# Com 3 níveis: vermelho (maior) / amarelo (média) / verde (menor) - sem azul
+# (pedido explícito: "Caso só haja 3 opções de criticidade, utiliza vermelho
+# para a maior criticidade, amarelo para média e verde para baixa").
+_CORES_CRITICIDADE_3_NIVEIS = (_VERMELHO_CRITICIDADE, _AMARELO_CRITICIDADE, _VERDE_CRITICIDADE)
+# Com 4 níveis: vermelho / amarelo / verde / azul.
+_CORES_CRITICIDADE_4_NIVEIS = (_VERMELHO_CRITICIDADE, _AMARELO_CRITICIDADE, _VERDE_CRITICIDADE, _AZUL_CRITICIDADE)
+
+
+def _espectro_temperatura_criticidade(quantidade: int) -> list[str]:
+    """
+    Espectro de temperatura do mais quente (vermelho, mais crítico) ao mais
+    frio (azul, menos crítico), interpolado linearmente em N tons - usado
+    quando há MAIS de 4 níveis de criticidade (pedido explícito: "Caso haja
+    mais cores, faça um espectro de temperatura, do mais quente ao mais
+    frio"). As pontas do espectro são as mesmas cores vermelho/azul usadas
+    nos esquemas de 3/4 níveis, pra manter consistência visual entre eles.
+    """
+    if quantidade <= 1:
+        return [_VERMELHO_CRITICIDADE]
+    inicio = (0xE6, 0x39, 0x46)  # vermelho
+    fim = (0x2A, 0x78, 0xD6)  # azul
+    cores = []
+    for indice in range(quantidade):
+        fracao = indice / (quantidade - 1)
+        r = round(inicio[0] + (fim[0] - inicio[0]) * fracao)
+        g = round(inicio[1] + (fim[1] - inicio[1]) * fracao)
+        b = round(inicio[2] + (fim[2] - inicio[2]) * fracao)
+        cores.append(f"#{r:02X}{g:02X}{b:02X}")
+    return cores
+
+
+def cor_discreta_criticidade_ordenada(valores_do_mais_para_o_menos_critico: list[str]) -> dict[str, str]:
+    """
+    Recebe os valores de um indicador de criticidade JÁ NA ORDEM do mais
+    crítico pro menos crítico e devolve o `color_discrete_map` fixo
+    correspondente: vermelho/amarelo/verde para 3 níveis, +azul para 4
+    níveis, ou um espectro de temperatura vermelho->azul para qualquer
+    outra quantidade (1, 2, 5+).
+    """
+    quantidade = len(valores_do_mais_para_o_menos_critico)
+    if quantidade == 3:
+        cores = _CORES_CRITICIDADE_3_NIVEIS
+    elif quantidade == 4:
+        cores = _CORES_CRITICIDADE_4_NIVEIS
+    else:
+        cores = _espectro_temperatura_criticidade(quantidade)
+    return dict(zip(valores_do_mais_para_o_menos_critico, cores))
+
+
+# Palavras-chave (PT/EN, sem acento, minúsculas) usadas para tentar reconhecer
+# a criticidade de um valor de texto livre - ordem = mais crítico primeiro.
+_PALAVRAS_CHAVE_CRITICIDADE: tuple[tuple[int, tuple[str, ...]], ...] = (
+    (0, ("critica", "critical", "blocker", "blocking", "urgente", "urgent")),
+    (1, ("alta", "alto", "high", "major")),
+    (2, ("media", "medio", "medium", "normal", "moderate", "moderada", "moderado")),
+    (3, ("baixa", "baixo", "low", "minor", "trivial")),
+)
+
+_PADRAO_PREFIXO_NUMERICO_CRITICIDADE = re.compile(r"^\s*(\d+)\s*[-–—.:)]")
+
+
+def _normalizar_texto_criticidade(valor: str) -> str:
+    sem_acento = unicodedata.normalize("NFKD", str(valor)).encode("ascii", "ignore").decode("ascii")
+    return sem_acento.strip().lower()
+
+
+def tentar_ordenar_criticidade(valores: list[str]) -> Optional[list[str]]:
+    """
+    Tenta descobrir, sozinho, a ordem "mais crítico -> menos crítico" de uma
+    lista de valores de TEXTO LIVRE (ex.: o campo manual "Severity"/"Priority"
+    do Azure DevOps, que não segue um vocabulário fixo de um projeto pro
+    outro). Devolve a lista reordenada só quando consegue reconhecer TODOS os
+    valores com confiança; devolve `None` quando não consegue - quem chamar
+    deve então manter a paleta padrão (`PALETA_COLORIDA`) em vez de arriscar
+    aplicar uma cor com o significado ERRADO (ex.: pintar "Baixa" de
+    vermelho), o que seria pior do que não colorir de forma especial.
+
+    Duas estratégias, nesta ordem:
+      1. Prefixo numérico (padrão comum do Azure DevOps: "1 - Critical",
+         "2 - High", "3 - Medium", "4 - Low") - quanto MENOR o número, mais
+         crítico, mesma convenção nativa da ferramenta.
+      2. Palavras-chave conhecidas em PT/EN (crítica/alta/média/baixa,
+         critical/high/medium/low, e sinônimos comuns).
+    """
+    if not valores:
+        return None
+
+    prefixos: list[tuple[int, str]] = []
+    todos_tem_prefixo = True
+    for valor in valores:
+        casamento = _PADRAO_PREFIXO_NUMERICO_CRITICIDADE.match(str(valor))
+        if not casamento:
+            todos_tem_prefixo = False
+            break
+        prefixos.append((int(casamento.group(1)), valor))
+    if todos_tem_prefixo:
+        return [valor for _, valor in sorted(prefixos, key=lambda item: item[0])]
+
+    rankeados: list[tuple[int, str]] = []
+    for valor in valores:
+        texto_normalizado = _normalizar_texto_criticidade(valor)
+        rank_encontrado = None
+        for rank, palavras in _PALAVRAS_CHAVE_CRITICIDADE:
+            if any(palavra in texto_normalizado for palavra in palavras):
+                rank_encontrado = rank
+                break
+        if rank_encontrado is None:
+            return None
+        rankeados.append((rank_encontrado, valor))
+    rankeados.sort(key=lambda item: item[0])
+    return [valor for _, valor in rankeados]
+
+
+def cor_discreta_criticidade(
+    valores_presentes,
+    ordem_conhecida: Optional[list[str]] = None,
+) -> Optional[dict[str, str]]:
+    """
+    Monta o `color_discrete_map` de um indicador de criticidade qualquer.
+
+    `ordem_conhecida`: quando o CHAMADOR já sabe de antemão a ordem "mais
+    crítico -> menos crítico" (ex.: Severidade Calculada, que segue sempre
+    `NIVEIS_SEVERIDADE_CALCULADA` em `core/analytics.py`), passa a lista
+    completa aqui - a função só filtra pros valores realmente presentes,
+    mantendo essa ordem. Sem isso (campo de texto livre, tipo o "Severity"
+    manual do Azure DevOps), tenta descobrir a ordem sozinha via
+    `tentar_ordenar_criticidade` - se não conseguir reconhecer todos os
+    valores com confiança, devolve `None` (o app deve então manter a cor
+    padrão de sempre, sem forçar nenhum esquema).
+    """
+    valores_presentes = {str(valor) for valor in valores_presentes}
+    if not valores_presentes:
+        return None
+    if ordem_conhecida:
+        ordenados = [valor for valor in ordem_conhecida if valor in valores_presentes]
+        if len(ordenados) != len(valores_presentes):
+            # Apareceu algum valor fora da lista oficial conhecida - não dá
+            # pra confiar cegamente na ordem, então desiste (paleta padrão)
+            # em vez de devolver um mapa incompleto silenciosamente.
+            return None
+    else:
+        ordenados = tentar_ordenar_criticidade(sorted(valores_presentes))
+        if ordenados is None:
+            return None
+    return cor_discreta_criticidade_ordenada(ordenados)
+
+
+# ==============================================================================
+# Cores FIXAS e ESTRITAS específicas do gráfico "Distribuição por
+# Severidade/Prioridade" (campo manual "Severity"/"Priority" do Azure DevOps)
+# ==============================================================================
+# Pedido explícito do usuário, com prioridade sobre o esquema genérico de
+# criticidade acima (`cor_discreta_criticidade`) especificamente para ESTE
+# gráfico: em vez de tentar adivinhar a ordem por heurística, os 5 valores
+# abaixo (vocabulário padrão de Severity do Azure DevOps, + o rótulo do
+# próprio app para valor vazio) têm cor fixa garantida, sempre a mesma,
+# reconhecidos por casamento EXATO (ignorando acento/maiúscula e um possível
+# prefixo numérico tipo "1 - Critical"):
+#   Critical           -> vermelho
+#   High                -> laranja
+#   Medium              -> amarelo
+#   Low                 -> verde
+#   Não atribuído(a)    -> azul (rótulo do app pra valor vazio - ver
+#                          ROTULO_VAZIO_PADRAO em core/analytics.py)
+_LARANJA_SEVERIDADE = "#F15A24"  # laranja de marca (PRIMARY_COLOR)
+
+_CORES_SEVERIDADE_PRIORIDADE_POR_TEXTO_NORMALIZADO: dict[str, str] = {
+    "critical": _VERMELHO_CRITICIDADE,
+    "high": _LARANJA_SEVERIDADE,
+    "medium": _AMARELO_CRITICIDADE,
+    "low": _VERDE_CRITICIDADE,
+    _normalizar_texto_criticidade("Não atribuído(a)"): _AZUL_CRITICIDADE,
+}
+
+
+def cor_discreta_severidade_prioridade(valores_presentes) -> dict[str, str]:
+    """
+    Mapa de cores ESTRITO pro gráfico "Distribuição por Severidade/Prioridade":
+    Critical=vermelho, High=laranja, Medium=amarelo, Low=verde e
+    "Não atribuído(a)"=azul, sempre - reconhecimento por casamento EXATO
+    (não por palavra-chave/substring como `tentar_ordenar_criticidade`),
+    ignorando acento/maiúscula e um possível prefixo numérico ("1 - Critical",
+    "2 - High" etc., padrão comum do Azure DevOps).
+
+    Diferente de `cor_discreta_criticidade`, esta função NUNCA devolve `None`:
+    qualquer valor presente que não seja um dos 5 acima (ex.: alguém digitou
+    um valor de Severity fora do padrão) ainda ganha uma cor, só que puxada
+    da paleta colorida padrão do app (`PALETA_COLORIDA`) em vez de uma das 5
+    cores fixas - assim o gráfico nunca fica com fatia sem cor nenhuma, mas
+    os 5 valores conhecidos NUNCA mudam de cor por causa disso.
+    """
+    valores_presentes = {str(valor) for valor in valores_presentes}
+    mapa: dict[str, str] = {}
+    indice_cor_extra = 0
+    for valor in sorted(valores_presentes):
+        texto_sem_prefixo = valor
+        casamento_prefixo = _PADRAO_PREFIXO_NUMERICO_CRITICIDADE.match(valor)
+        if casamento_prefixo:
+            texto_sem_prefixo = valor[casamento_prefixo.end():]
+        cor = _CORES_SEVERIDADE_PRIORIDADE_POR_TEXTO_NORMALIZADO.get(
+            _normalizar_texto_criticidade(texto_sem_prefixo)
+        )
+        if cor is None:
+            cor = PALETA_COLORIDA[indice_cor_extra % len(PALETA_COLORIDA)]
+            indice_cor_extra += 1
+        mapa[valor] = cor
     return mapa
 
 

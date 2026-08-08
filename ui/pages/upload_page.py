@@ -14,10 +14,11 @@ from core.azure_devops_client import (
     listar_projetos,
     listar_queries,
     montar_link_criacao_query,
+    obter_identidade_autenticada,
 )
-from core.column_mapper import MapeamentoColunas, detectar_mapeamento
+from core.column_mapper import MapeamentoColunas, detectar_mapeamento, normalizar_texto
 from core.data_loader import DataLoadError, ResultadoCarga, carregar_arquivo
-from core.logs_sistema import TIPO_ERRO, registrar_log
+from core.logs_sistema import TIPO_ERRO, TIPO_PAINEL, registrar_log
 from ui.components import action_button, finish_action, loading_overlay, render_header
 from utils.session import resetar_dados_importados, resetar_selecao_azure_devops
 
@@ -25,6 +26,35 @@ from utils.session import resetar_dados_importados, resetar_selecao_azure_devops
 # carregado da API até o usuário clicar em "Carregar organização"). Se sua
 # empresa usa mais de uma organização no Azure DevOps, adicione aqui.
 ORGANIZACOES_SUGERIDAS = ["refuturiza"]
+
+# Apelidos conhecidos: o "dono do PAT" (nome de exibição devolvido pelo
+# próprio Azure DevOps) nem sempre bate, letra por letra, com o "name"
+# cadastrado pra esse mesmo usuário no login deste app (`auth/users.yaml`) -
+# pode ter sido cadastrado como apelido, nome incompleto, etc. Sem esse mapa,
+# a pessoa aparecia com a bandeira de "possível anomalia" usando o PRÓPRIO
+# PAT, logada na PRÓPRIA conta - um falso positivo.
+#
+# A chave é o `username` de LOGIN deste app (`AuthManager.current_username()`,
+# não o nome de exibição); o valor é o conjunto de nomes que o Azure DevOps
+# pode devolver como dono do PAT e que correspondem, de fato, à mesma pessoa
+# desse login. Só entra aqui como reforço do nome já cadastrado no login -
+# continua funcionando normalmente pra qualquer usuário/nome que não esteja
+# nesta lista.
+APELIDOS_DONO_PAT_POR_USUARIO_APP: dict[str, set[str]] = {
+    "admin": {
+        "Vinícius Bemfica",
+        "Vinícius Coelho Bemfica",
+        "Vinicius Bemfica",
+        "Vinicius Coelho Bemfica",
+        "Vinícius Benfica",
+        "Vinícius Coelho Benfica",
+        "Vinicius Benfica",
+        "Vinicius Coelho Benfica",
+        "Vinicius Coelho",
+        "Vinícius Coelho",
+        "vinicius.refuturiza"
+    }
+}
 
 CAMPOS_MAPEAVEIS = [
     ("projeto", "Projeto"),
@@ -502,6 +532,60 @@ def _renderizar_importacao_azure_devops() -> None:
                 )
             else:
                 st.session_state["erro_carga"] = None
+                # Registra QUEM usou o PAT do Azure DevOps pra buscar os
+                # dados - com DUAS identidades na mensagem, pra ficar
+                # identificável de relance na tela de Logs do Sistema
+                # (Administração → Logs do Sistema → Ações no Painel):
+                #   1) o usuário LOGADO neste app (nome de exibição, não só
+                #      o username de login);
+                #   2) o dono de verdade do PAT usado, consultado na hora
+                #      direto na API do Azure DevOps ("Connection Data") -
+                #      é o nome que aparece no PRÓPRIO log de acesso do
+                #      Azure DevOps também, então é o que de fato importa
+                #      pra auditoria/rastreabilidade. Só não vem preenchido
+                #      se essa chamada extra falhar por algum motivo (PAT
+                #      revogado entre a busca e este ponto, instabilidade da
+                #      API etc.) - nesse caso mostra "não identificado" em
+                #      vez de deixar a mensagem incompleta sem explicação.
+                identidade_pat = obter_identidade_autenticada(organizacao_carregada, pat)
+                nome_usuario_app = AuthManager.current_user_name() or AuthManager.current_username()
+
+                # Sinalizador visual de possível anomalia (pedido explícito:
+                # "bater o olho" na tela de logs) - quando o dono de verdade
+                # do PAT (segundo o próprio Azure DevOps) NÃO é a mesma
+                # pessoa logada neste app no momento, prefixa a mensagem com
+                # 🚩. Não prova nada sozinho (pode ser legítimo - alguém
+                # emprestou o token de propósito), mas chama atenção pra
+                # conferir. Comparação ignora acento/maiúscula (mesmo nome
+                # escrito de um jeito ligeiramente diferente no app x no
+                # Azure DevOps não deve disparar alarme falso) e só acontece
+                # quando o dono do PAT foi identificado de verdade - sem
+                # isso não dá pra concluir nada, então não marca como
+                # anomalia só por falha técnica da consulta. Além do nome
+                # cadastrado no login, também aceita qualquer apelido
+                # conhecido pra esse mesmo login (ver
+                # `APELIDOS_DONO_PAT_POR_USUARIO_APP`, acima) - cobre o caso
+                # de o nome de exibição no Azure DevOps não bater 100% com o
+                # nome cadastrado no login deste app, mesmo sendo a mesma
+                # pessoa.
+                apelidos_usuario_logado = APELIDOS_DONO_PAT_POR_USUARIO_APP.get(
+                    AuthManager.current_username(), set()
+                )
+                nomes_aceitos_para_usuario_logado = {nome_usuario_app, *apelidos_usuario_logado}
+                possivel_anomalia = (
+                    identidade_pat is not None
+                    and normalizar_texto(identidade_pat)
+                    not in {normalizar_texto(nome) for nome in nomes_aceitos_para_usuario_logado}
+                )
+                prefixo = "🚩 POSSÍVEL ANOMALIA (PAT de outra pessoa?) · " if possivel_anomalia else ""
+
+                registrar_log(
+                    TIPO_PAINEL, AuthManager.current_username(),
+                    f"{prefixo}Baixou relatório do Azure DevOps via PAT próprio · "
+                    f"Usuário logado no app: {nome_usuario_app} · "
+                    f"Dono do PAT (Azure DevOps): {identidade_pat or 'não identificado'} · "
+                    f"Projeto: '{projeto_selecionado}' · {len(dataframe)} itens",
+                )
         finish_action("btn_baixar_azure_devops")
         st.rerun()
 
