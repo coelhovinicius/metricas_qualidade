@@ -480,6 +480,42 @@ def injetar_css_global() -> None:
             to {{ transform: rotate(360deg); }}
         }}
 
+        /* ---------- Toggle "2 por linha" flutuante (dashboard) ---------- */
+        /* Fica fixo num canto da tela, por cima do conteúdo, em vez de ocupar
+           espaço lá no topo da página - continua acessível mesmo depois de
+           rolar bastante pelos gráficos, sem precisar voltar ao topo pra
+           trocar o layout. `st.container(key="dashboard_toggle_flutuante")`
+           em dashboard_page.py gera a classe `st-key-dashboard_toggle_flutuante`
+           usada aqui (mesma técnica dos botões acima). `width: fit-content`
+           evita que o container flutuante estique pra largura inteira da
+           tela (comportamento padrão dos blocos do Streamlit). z-index fica
+           abaixo do overlay de carregamento (999999), mas acima de qualquer
+           gráfico/conteúdo normal da página. */
+        .st-key-dashboard_toggle_flutuante {{
+            position: fixed;
+            top: 84px;
+            right: 28px;
+            z-index: 9999;
+            width: fit-content;
+            max-width: 60vw;
+            background-color: #FFFFFF;
+            border: 1px solid #ecebe6;
+            border-radius: 999px;
+            padding: 6px 18px;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.14);
+        }}
+        .st-key-dashboard_toggle_flutuante label {{
+            margin-bottom: 0 !important;
+        }}
+        @media (max-width: 900px) {{
+            .st-key-dashboard_toggle_flutuante {{
+                top: auto;
+                bottom: 18px;
+                right: 14px;
+                padding: 5px 14px;
+            }}
+        }}
+
         /* ---------- Card do formulário de login (antes era só um bloco solto) ---------- */
         div[data-testid="stForm"] {{
             background-color: {SECONDARY_BACKGROUND_COLOR};

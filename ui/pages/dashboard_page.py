@@ -19,6 +19,7 @@ from ui.theme import (
     PALETA_COLORIDA,
     PALETA_GRAFICOS,
     PALETA_STATUS,
+    PRIMARY_COLOR,
     cor_discreta_coluna_board,
     cor_discreta_criticidade,
     cor_discreta_severidade_prioridade,
@@ -186,6 +187,129 @@ def _construir_grafico_pareto(df: pd.DataFrame, x: str, y: str) -> go.Figure:
     return fig
 
 
+def _construir_grafico_mapa_calor(
+    df: pd.DataFrame, x: str, y: str, cor: Optional[str], ordem_categorias: Optional[dict[str, list[str]]]
+) -> go.Figure:
+    """
+    Mapa de calor (heatmap): duas dimensões categóricas nos eixos (`x` e
+    `cor` - aqui `cor` funciona como o eixo Y do mapa, não como "uma cor por
+    categoria") e a magnitude (`y`, normalmente "Quantidade") como
+    intensidade de cor de cada célula, numa única escala SEQUENCIAL (branco
+    -> laranja da marca). Cor sequencial (um matiz só, do claro ao escuro)
+    é a escolha certa pra magnitude - nunca uma paleta categórica aqui, que
+    faria a cor "competir" com a própria intensidade que o mapa de calor
+    existe pra mostrar.
+
+    Resolve a ilegibilidade que barras agrupadas/empilhadas têm quando uma
+    das duas dimensões tem muitas categorias (ex.: até 19 Colunas do Board,
+    ou uma lista longa de Responsáveis) - um grid de células substitui um
+    emaranhado de barras coloridas.
+
+    Requer as três colunas (`x`, `cor`, `y`) presentes em `df` - só é
+    oferecido como opção de "Tipo de gráfico" nas seções que já cruzam duas
+    dimensões (Area Path × Coluna do Board, Responsável × Severidade).
+    """
+    tabela = df.pivot_table(index=cor, columns=x, values=y, aggfunc="sum", fill_value=0)
+
+    ordem_x = (ordem_categorias or {}).get(x)
+    if ordem_x:
+        colunas_na_ordem = [valor for valor in ordem_x if valor in tabela.columns]
+        colunas_restantes = [valor for valor in tabela.columns if valor not in colunas_na_ordem]
+        tabela = tabela[colunas_na_ordem + colunas_restantes]
+
+    ordem_y = (ordem_categorias or {}).get(cor)
+    if ordem_y:
+        linhas_na_ordem = [valor for valor in ordem_y if valor in tabela.index]
+        linhas_restantes = [valor for valor in tabela.index if valor not in linhas_na_ordem]
+        tabela = tabela.reindex(linhas_na_ordem + linhas_restantes)
+
+    fig = go.Figure(
+        data=go.Heatmap(
+            z=tabela.values,
+            x=[str(valor) for valor in tabela.columns],
+            y=[str(valor) for valor in tabela.index],
+            colorscale=[[0.0, "#FFFFFF"], [1.0, PRIMARY_COLOR]],
+            text=tabela.values,
+            texttemplate="%{text}",
+            textfont={"size": 11},
+            hovertemplate=f"{x}: %{{x}}<br>{cor}: %{{y}}<br>{y}: %{{z}}<extra></extra>",
+            xgap=2,
+            ygap=2,
+            colorbar=dict(title=y),
+        )
+    )
+    fig.update_xaxes(title=x)
+    fig.update_yaxes(title=cor, autorange="reversed")
+    return fig
+
+
+def _construir_grafico_bolha_backlog(df_grupo: pd.DataFrame, coluna_rotulo: str) -> go.Figure:
+    """
+    Gráfico de bolha "Backlog Aberto: Volume × Idade × Risco" - 3 dimensões
+    num só olhar, uma bolha por grupo (Area Path ou Responsável, à escolha
+    de quem está vendo o dashboard - ver `_sec_backlog_bolha` em
+    `render_dashboard_page`):
+
+        eixo X = "Idade Média (dias)" parado em aberto naquele grupo;
+        eixo Y = "Quantidade" de itens em aberto do grupo (reforçado pelo
+            TAMANHO da bolha, pro mesmo valor "pular aos olhos" duas vezes);
+        cor da bolha = "% Severidade Alta/Crítica" - canal SEQUENCIAL (um
+            matiz só, do branco ao vermelho), NUNCA uma cor por grupo:
+            com muitos Area Paths/Responsáveis, uma paleta categórica
+            deixaria rapidamente de diferenciar as bolhas (é exatamente o
+            motivo de mapas de bolha usarem, no máximo, ~3 cores
+            categóricas antes de precisar de outro canal) - aqui a cor
+            conta a história de RISCO, não de identidade de quem é o
+            grupo (isso já está no rótulo, visível ao passar o mouse).
+
+    O quadrante mais preocupante é bolha grande, mais à direita (parada há
+    mais tempo) e mais vermelha (mais itens Critical/High) ao mesmo tempo.
+    """
+    fig = px.scatter(
+        df_grupo,
+        x="Idade Média (dias)",
+        y="Quantidade",
+        size="Quantidade",
+        color="% Severidade Alta/Crítica",
+        color_continuous_scale=[[0.0, "#FFFFFF"], [1.0, "#D32F2F"]],
+        range_color=[0, 100],
+        hover_name=coluna_rotulo,
+        size_max=46,
+        labels={"% Severidade Alta/Crítica": "% Alta/Crítica"},
+    )
+    fig.update_traces(marker=dict(line=dict(width=2, color="#FFFFFF"), sizemin=8))
+    fig.update_layout(coloraxis_colorbar=dict(title="% Alta/<br>Crítica", ticksuffix="%"))
+    return fig
+
+
+def _construir_grafico_tendencia_multiplos_pequenos(df: pd.DataFrame) -> go.Figure:
+    """
+    "Múltiplos pequenos": um mini-gráfico de linha por Projeto/Area Path,
+    lado a lado, todos com a MESMA escala de eixo Y (`facet_col` do Plotly
+    Express já faz isso por padrão - reforçado aqui com `matches="y"` só
+    pra deixar explícito) - facilita comparar o FORMATO da tendência entre
+    projetos (crescendo, estável, com pico isolado etc.) sem empilhar todo
+    mundo numa única linha multicolorida, que fica ilegível com muitos
+    projetos e/ou muitos valores de Status ao mesmo tempo.
+    """
+    tem_status = "Status" in df.columns
+    mapa_cores = PALETA_STATUS if tem_status and set(df["Status"].unique()) <= set(PALETA_STATUS) else None
+    fig = px.line(
+        df, x="Semana", y="Quantidade",
+        color="Status" if tem_status else None,
+        facet_col="Projeto", facet_col_wrap=3,
+        color_discrete_sequence=PALETA_COLORIDA,
+        color_discrete_map=mapa_cores,
+        markers=True,
+    )
+    fig.update_yaxes(matches="y")
+    # Os títulos de cada mini-gráfico vêm como "Projeto=Nome" (padrão do
+    # Plotly pra facetas) - troca por só "Nome", mais limpo de ler numa
+    # grade com vários mini-gráficos pequenos lado a lado.
+    fig.for_each_annotation(lambda anotacao: anotacao.update(text=anotacao.text.split("=")[-1]))
+    return fig
+
+
 def _construir_figura(
     df: pd.DataFrame,
     tipo: str,
@@ -301,6 +425,30 @@ def _construir_figura(
                           color_discrete_map=cor_discreta_treemap)
     elif tipo == "Pareto":
         fig = _construir_grafico_pareto(df, x, y)
+    elif tipo == "Funil":
+        # Funil: mostra a quantidade de itens em cada ESTÁGIO, na ordem em
+        # que as linhas já chegam em `df` (não reordena por valor, ao
+        # contrário de barras/pizza) - é o motivo de existir: pensado pra
+        # "Distribuição por Coluna do Board", cujas linhas já vêm ordenadas
+        # pelo fluxo real do board (Backlog -> Finalizado, ver
+        # `ORDEM_COLUNAS_BOARD`), então o funil desenha exatamente esse
+        # fluxo, de cima pra baixo, e cada estágio já sai com o mesmo
+        # percentual de queda em relação ao primeiro (`textinfo`, recurso
+        # nativo do Plotly). Reaproveita a mesma cor por categoria de
+        # `_cores_para_barras` (a paleta dedicada da Coluna do Board, ou o
+        # ciclo padrão por posição) - assim uma pessoa alternando entre
+        # Barras/Pizza/Funil pra ver os mesmos dados NÃO vê a cor de cada
+        # coluna mudar de um tipo de gráfico pro outro.
+        fig = go.Figure(
+            go.Funnel(
+                y=df[x],
+                x=df[y],
+                marker=dict(color=_cores_para_barras(x)),
+                textinfo="value+percent initial",
+            )
+        )
+    elif tipo == "Mapa de Calor":
+        fig = _construir_grafico_mapa_calor(df, x, y, cor, ordem_categorias)
     elif tipo == "Radar (Preenchido)":
         # Gráfico de radar/teia PREENCHIDO (filled radar chart): cada série vira
         # um polígono fechado com a área sombreada, no estilo clássico de
@@ -483,26 +631,26 @@ def render_dashboard_page() -> None:
     status_binario = analytics.status_e_binario(df_filtrado)
 
     # ------------------------------------------------- Toggle: gráficos por linha
-    # Fica logo no topo da página, antes de qualquer gráfico - controla o
-    # layout de TODOS os gráficos abaixo (via `_FilaGraficos`). Padrão = 1
-    # por linha (layout "clássico"); "2 por linha" é opcional, pra quem
-    # preferir ver mais gráficos de uma vez (bom pra gráficos mais simples,
-    # com pouco texto de explicação).
-    col_toggle_colunas, _col_espaco_toggle = st.columns([1, 2])
-    with col_toggle_colunas:
-        colunas_por_linha = st.radio(
-            "Gráficos por linha",
-            options=[1, 2],
-            format_func=lambda valor: "1 por linha (padrão)" if valor == 1 else "2 por linha (lado a lado)",
-            index=0,
-            key="dashboard_colunas_por_linha",
-            horizontal=True,
+    # Flutuante (fica fixo no canto da tela, não rola junto com o conteúdo -
+    # ver CSS `.st-key-dashboard_toggle_flutuante` em `ui/theme.py`), pra dar
+    # pra trocar o layout mesmo depois de já ter descido bastante pelos
+    # gráficos, sem precisar voltar ao topo da página. Controla o layout de
+    # TODOS os gráficos abaixo (via `_FilaGraficos`). Desligado (padrão) = 1
+    # por linha (layout "clássico"); ligado = 2 por linha, pra quem preferir
+    # ver mais gráficos de uma vez (bom pra gráficos mais simples, com pouco
+    # texto de explicação).
+    with st.container(key="dashboard_toggle_flutuante"):
+        duas_colunas_por_linha = st.toggle(
+            "2 por linha",
+            value=False,
+            key="dashboard_toggle_duas_colunas",
             help=(
-                "Controla quantos gráficos aparecem lado a lado em cada linha do painel. "
-                "No celular, sempre fica um por linha, independente dessa escolha."
+                "Ligado: mostra 2 gráficos lado a lado em cada linha do painel. "
+                "Desligado (padrão): 1 gráfico por linha. No celular, sempre fica "
+                "um por linha, independente dessa escolha."
             ),
         )
-    st.markdown("<br>", unsafe_allow_html=True)
+    colunas_por_linha = 2 if duas_colunas_por_linha else 1
 
     # Lista mutável que vai sendo preenchida por `_plotar`/`_renderizar_construtor_grafico_personalizado`
     # conforme cada seção é desenhada abaixo - usada só pelo botão "Gerar PDF
@@ -554,7 +702,7 @@ def render_dashboard_page() -> None:
                 )
             col_tipo, _col_espaco = st.columns([1, 3])
             with col_tipo:
-                tipo_status = _selecionar_tipo_grafico("status_geral", ["Pizza", "Rosca", "Barras", "Barras Horizontais", "Treemap", "Radar (Preenchido)"])
+                tipo_status = _selecionar_tipo_grafico("status_geral", ["Barras Horizontais", "Pizza", "Rosca", "Barras", "Treemap", "Radar (Preenchido)"])
             if status_binario:
                 resumo_status = df_filtrado["__status_normalizado__"].value_counts().reset_index()
                 resumo_status.columns = ["Status", "Quantidade"]
@@ -615,6 +763,46 @@ def render_dashboard_page() -> None:
         if df_mais_antigos is not None and not df_mais_antigos.empty:
             with st.expander("Ver os itens em aberto há mais tempo"):
                 st.dataframe(df_mais_antigos, use_container_width=True)
+
+        # ---- Gráfico de bolha: Volume x Idade x Risco, por Area Path ou Responsável ----
+        opcoes_agrupamento_bolha: dict[str, str] = {}
+        if mapeamento.projeto and mapeamento.projeto in df_filtrado.columns:
+            opcoes_agrupamento_bolha["Area Path / Projeto"] = mapeamento.projeto
+        if mapeamento.responsavel and mapeamento.responsavel in df_filtrado.columns:
+            opcoes_agrupamento_bolha["Responsável"] = mapeamento.responsavel
+
+        if opcoes_agrupamento_bolha:
+            st.markdown("**Backlog Aberto: Volume × Idade × Risco**")
+            _explicacao(
+                "Cada bolha é um grupo (Area Path ou Responsável, à sua escolha logo abaixo). "
+                "Eixo horizontal: há quanto tempo, em média, os itens abertos daquele grupo "
+                "estão parados. Eixo vertical e tamanho da bolha: quantos itens em aberto o "
+                "grupo tem (os dois reforçam o mesmo número, de propósito). Cor: quanto mais "
+                "vermelha, maior o percentual de itens Severidade Alta/Crítica naquele grupo - "
+                "sem Severidade mapeada, todas as bolhas ficam brancas (0%). O quadrante mais "
+                "preocupante é bolha grande, mais à direita e mais vermelha ao mesmo tempo: "
+                "muito item, parado há muito tempo, e muito crítico."
+            )
+            col_agrupar_bolha, _col_espaco_bolha = st.columns([1, 3])
+            with col_agrupar_bolha:
+                rotulo_agrupamento_bolha = st.selectbox(
+                    "Agrupar bolhas por", list(opcoes_agrupamento_bolha.keys()), key="backlog_bolha_agrupar_por",
+                )
+            coluna_agrupamento_bolha = opcoes_agrupamento_bolha[rotulo_agrupamento_bolha]
+            df_backlog_bolha = analytics.backlog_aberto_por_grupo(
+                df_filtrado, mapeamento, coluna_agrupamento_bolha, rotulo_agrupamento_bolha
+            )
+            if df_backlog_bolha is not None and not df_backlog_bolha.empty:
+                fig_backlog_bolha = _construir_grafico_bolha_backlog(df_backlog_bolha, rotulo_agrupamento_bolha)
+                st.plotly_chart(fig_backlog_bolha, use_container_width=True, key="chart_backlog_bolha")
+                if secoes_pdf is not None:
+                    secoes_pdf.append({
+                        "titulo": f"Backlog Aberto: Volume × Idade × Risco (por {rotulo_agrupamento_bolha})",
+                        "fig": fig_backlog_bolha,
+                    })
+            else:
+                st.info("Sem dados suficientes para montar o gráfico de bolha com os filtros atuais.")
+
         st.divider()
 
     # ------------------------------------------------------------- Sprints
@@ -755,9 +943,36 @@ def render_dashboard_page() -> None:
     if df_tendencia is not None:
         def _sec_tendencia() -> None:
             st.markdown("**Tendência ao Longo do Tempo**")
-            _plotar(df_tendencia, "Linha", x="Semana", y="Quantidade", chave="tendencia",
-                    cor="Status" if "Status" in df_tendencia.columns else None,
-                    titulo="Tendência ao Longo do Tempo", secoes_pdf=secoes_pdf)
+            usar_multiplos_pequenos = False
+            if mapeamento.projeto and mapeamento.projeto in df_filtrado.columns:
+                usar_multiplos_pequenos = st.checkbox(
+                    "Separar por Projeto (múltiplos pequenos)",
+                    key="tendencia_multiplos_pequenos",
+                    help=(
+                        "Em vez de uma linha só com todos os projetos misturados, mostra um "
+                        "mini-gráfico de tendência por Projeto, lado a lado, todos na mesma escala "
+                        "de eixo Y - mais fácil de comparar o FORMATO da tendência entre times do "
+                        "que tentar ler várias linhas coloridas empilhadas no mesmo gráfico."
+                    ),
+                )
+            if usar_multiplos_pequenos:
+                df_tendencia_projeto = analytics.tendencia_temporal_por_projeto(df_filtrado, mapeamento)
+                if df_tendencia_projeto is not None and not df_tendencia_projeto.empty:
+                    fig_tendencia_projeto = _construir_grafico_tendencia_multiplos_pequenos(df_tendencia_projeto)
+                    st.plotly_chart(
+                        fig_tendencia_projeto, use_container_width=True, key="chart_tendencia_multiplos_pequenos"
+                    )
+                    if secoes_pdf is not None:
+                        secoes_pdf.append({
+                            "titulo": "Tendência ao Longo do Tempo — por Projeto",
+                            "fig": fig_tendencia_projeto,
+                        })
+                else:
+                    st.info("Sem dados suficientes para separar por Projeto com os filtros atuais.")
+            else:
+                _plotar(df_tendencia, "Linha", x="Semana", y="Quantidade", chave="tendencia",
+                        cor="Status" if "Status" in df_tendencia.columns else None,
+                        titulo="Tendência ao Longo do Tempo", secoes_pdf=secoes_pdf)
         fila.adicionar(_sec_tendencia)
 
     # ------------------------------------------------- Bugs abertos vs. solucionados
@@ -856,6 +1071,30 @@ def render_dashboard_page() -> None:
             )
         fila.adicionar(_sec_severidade)
 
+    # ------------------------------------------------- Carga de risco por Responsável
+    df_resp_x_severidade = analytics.distribuicao_responsavel_x_severidade(df_filtrado, mapeamento)
+    if df_resp_x_severidade is not None and not df_resp_x_severidade.empty:
+        def _sec_resp_severidade() -> None:
+            st.markdown("**Carga de Risco por Responsável (Responsável × Severidade)**")
+            _explicacao(
+                "Cruza Responsável/Executor com Severidade/Prioridade - mostra não só QUEM tem "
+                "mais itens, mas quem está segurando os mais críticos. No **Mapa de Calor** "
+                "(padrão), cada linha é um Responsável, cada coluna uma Severidade, e quanto "
+                "mais escura a célula, mais itens daquela pessoa estão naquela Severidade - "
+                "mais fácil de ler que barras/treemap quando há muitos Responsáveis."
+            )
+            col_tipo_resp_sev, _col_espaco_resp_sev = st.columns([1, 3])
+            with col_tipo_resp_sev:
+                tipo_resp_sev = _selecionar_tipo_grafico(
+                    "responsavel_severidade", ["Mapa de Calor", "Barras", "Barras Horizontais", "Treemap"]
+                )
+            _plotar(
+                df_resp_x_severidade, tipo_resp_sev, x="Severidade", y="Quantidade",
+                chave="responsavel_severidade", cor="Responsável",
+                titulo="Carga de Risco por Responsável (Responsável × Severidade)", secoes_pdf=secoes_pdf,
+            )
+        fila.adicionar(_sec_resp_severidade)
+
     # ------------------------------------------------- Distribuição por Coluna do Board
     df_coluna_board_completo = analytics.distribuicao_coluna_board(df_filtrado, mapeamento)
     if df_coluna_board_completo is not None and not df_coluna_board_completo.empty:
@@ -907,7 +1146,7 @@ def render_dashboard_page() -> None:
             col_board, _col_espaco_board = st.columns([1, 3])
             with col_board:
                 tipo_board = _selecionar_tipo_grafico(
-                    "coluna_board", ["Barras", "Barras Horizontais", "Pizza", "Rosca", "Treemap"]
+                    "coluna_board", ["Barras", "Barras Horizontais", "Pizza", "Rosca", "Treemap", "Funil"]
                 )
             if df_coluna_board is not None and not df_coluna_board.empty:
                 _plotar(
@@ -937,7 +1176,7 @@ def render_dashboard_page() -> None:
                 col_area_board, _col_espaco_area_board = st.columns([1, 3])
                 with col_area_board:
                     tipo_area_board = _selecionar_tipo_grafico(
-                        "area_path_coluna_board", ["Barras", "Barras Horizontais", "Treemap"]
+                        "area_path_coluna_board", ["Barras", "Barras Horizontais", "Treemap", "Mapa de Calor"]
                     )
                 _plotar(
                     df_area_x_board, tipo_area_board, x="Projeto", y="Quantidade",

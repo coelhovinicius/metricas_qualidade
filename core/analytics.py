@@ -441,6 +441,47 @@ def tendencia_temporal(df: pd.DataFrame, mapeamento: MapeamentoColunas) -> Optio
     return resultado
 
 
+def tendencia_temporal_por_projeto(df: pd.DataFrame, mapeamento: MapeamentoColunas) -> Optional[pd.DataFrame]:
+    """
+    Mesma base de `tendencia_temporal` (contagem por semana), só que abrindo
+    também por Projeto/Area Path - é o que alimenta os "múltiplos pequenos"
+    no dashboard (um mini-gráfico de tendência por Projeto, lado a lado,
+    todos na mesma escala de eixo Y), pra comparar o FORMATO da tendência
+    entre times sem empilhar todo mundo numa única linha multicolorida
+    (que fica ilegível com muitos projetos e/ou muitos valores de Status
+    juntos).
+
+    Devolve `None` sem Projeto mapeado - sem essa coluna não tem como abrir
+    por projeto (use `tendencia_temporal` nesse caso).
+    """
+    if not mapeamento.projeto or mapeamento.projeto not in df.columns:
+        return None
+    coluna_data = mapeamento.coluna_data_principal()
+    if not coluna_data or coluna_data not in df.columns:
+        return None
+
+    datas = pd.to_datetime(df[coluna_data], errors="coerce")
+    if datas.notna().sum() == 0:
+        return None
+
+    temp = df.copy()
+    temp["__data__"] = datas
+    temp = temp.dropna(subset=["__data__"])
+    temp["__semana__"] = temp["__data__"].dt.to_period("W").dt.start_time
+
+    coluna_status = "__status_bruto__" if mapeamento.status else None
+    colunas_agrupamento = ["__semana__", mapeamento.projeto] + ([coluna_status] if coluna_status else [])
+    resultado = (
+        temp.groupby(colunas_agrupamento, dropna=False)
+        .size()
+        .reset_index(name="Quantidade")
+    )
+    renomear = {"__semana__": "Semana", mapeamento.projeto: "Projeto"}
+    if coluna_status:
+        renomear[coluna_status] = "Status"
+    return resultado.rename(columns=renomear)
+
+
 def volume_por_responsavel(
     df: pd.DataFrame, mapeamento: MapeamentoColunas, agrupar_por_projeto: bool = False
 ) -> Optional[pd.DataFrame]:
@@ -559,6 +600,119 @@ def distribuicao_severidade(df: pd.DataFrame, mapeamento: MapeamentoColunas) -> 
         .sort_values("Quantidade", ascending=False)
     )
     return resultado
+
+
+def distribuicao_responsavel_x_severidade(
+    df: pd.DataFrame, mapeamento: MapeamentoColunas
+) -> Optional[pd.DataFrame]:
+    """
+    Cruza Responsável/Executor com Severidade/Prioridade: quantos itens de
+    cada pessoa estão em cada nível de severidade - base do gráfico "Carga
+    de Risco por Responsável" no dashboard (por padrão, um mapa de calor:
+    linhas = Responsável, colunas = Severidade, cor = quantidade). Mostra
+    não só QUEM tem mais itens, mas quem está segurando os mais críticos -
+    diferente de `volume_por_responsavel` (só quantidade, sem discriminar
+    por severidade).
+
+    Devolve `None` sem os dois campos mapeados (Responsável e Severidade) -
+    sem os dois não tem como cruzar.
+    """
+    if not mapeamento.responsavel or mapeamento.responsavel not in df.columns:
+        return None
+    if not mapeamento.severidade or mapeamento.severidade not in df.columns:
+        return None
+    resultado = (
+        df.groupby([mapeamento.responsavel, mapeamento.severidade], dropna=False)
+        .size()
+        .reset_index(name="Quantidade")
+        .rename(columns={mapeamento.responsavel: "Responsável", mapeamento.severidade: "Severidade"})
+    )
+    return resultado
+
+
+_PALAVRAS_SEVERIDADE_ALTA_CRITICA = ("critical", "high")
+
+
+def _severidade_e_alta_ou_critica(valor: object) -> bool:
+    """
+    True quando `valor` (um valor bruto de Severidade/Prioridade) contém a
+    palavra "critical" ou "high" (ignorando acento/maiúscula, e prefixo
+    numérico tipo "1 - Critical") - usado só para calcular o percentual de
+    itens de alto risco em `backlog_aberto_por_grupo`, não é o mesmo
+    esquema estrito de 5 cores de `cor_discreta_severidade_prioridade`
+    (ui/theme.py) - aqui é só "alto risco sim/não" para uma métrica
+    agregada, não uma cor exata por categoria.
+    """
+    if pd.isna(valor):
+        return False
+    texto = normalizar_texto(str(valor))
+    return any(palavra in texto for palavra in _PALAVRAS_SEVERIDADE_ALTA_CRITICA)
+
+
+def backlog_aberto_por_grupo(
+    df: pd.DataFrame, mapeamento: MapeamentoColunas, coluna_grupo: str, rotulo_grupo: str
+) -> Optional[pd.DataFrame]:
+    """
+    Agrupa o backlog aberto (mesma definição de itens "em aberto" usada em
+    `calcular_backlog_aberto`/`ranking_itens_mais_antigos_abertos`) por uma
+    coluna escolhida (ex.: Area Path/Projeto ou Responsável), calculando
+    por grupo:
+
+        - Quantidade: quantos itens em aberto o grupo tem;
+        - "Idade Média (dias)": média de dias parado desde a data de
+          referência do item (mesmo cálculo do KPI "Idade Média" da seção
+          Backlog Aberto);
+        - "% Severidade Alta/Crítica": qual fração desses itens em aberto é
+          Severidade "Critical"/"High" (ver `_severidade_e_alta_ou_critica`) -
+          fica em 0 se Severidade não estiver mapeada (não dá pra calcular).
+
+    É a base do gráfico de bolha "Backlog Aberto: Volume × Idade × Risco" no
+    dashboard - cada linha do resultado vira uma bolha (X = idade média,
+    Y/tamanho = quantidade, cor = % de alta severidade).
+
+    Devolve `None` sem Data principal mapeada, sem `coluna_grupo` presente
+    nos dados, ou sem nenhum item em aberto com data válida.
+    """
+    coluna_data = mapeamento.coluna_data_principal()
+    if not coluna_data or coluna_data not in df.columns:
+        return None
+    if not coluna_grupo or coluna_grupo not in df.columns:
+        return None
+
+    mascara_aberto = _mascara_itens_em_aberto(df, mapeamento)
+    if mascara_aberto is None:
+        return None
+
+    datas = pd.to_datetime(df[coluna_data], errors="coerce")
+    trabalho = df.loc[mascara_aberto & datas.notna()].copy()
+    if trabalho.empty:
+        return None
+
+    hoje = pd.Timestamp(agora_brasilia().date())
+    trabalho["__idade_dias__"] = (hoje - datas.loc[trabalho.index]).dt.days
+    trabalho["__grupo__"] = _rotular_valores_vazios(trabalho[coluna_grupo])
+
+    if mapeamento.severidade and mapeamento.severidade in trabalho.columns:
+        trabalho["__severidade_alta__"] = trabalho[mapeamento.severidade].apply(_severidade_e_alta_ou_critica)
+    else:
+        trabalho["__severidade_alta__"] = False
+
+    resultado = (
+        trabalho.groupby("__grupo__")
+        .agg(
+            Quantidade=("__idade_dias__", "size"),
+            __idade_media__=("__idade_dias__", "mean"),
+            __qtd_alta__=("__severidade_alta__", "sum"),
+        )
+        .reset_index()
+        .rename(columns={"__grupo__": rotulo_grupo})
+    )
+    resultado["Idade Média (dias)"] = resultado["__idade_media__"].round(1)
+    resultado["% Severidade Alta/Crítica"] = (
+        resultado["__qtd_alta__"] / resultado["Quantidade"] * 100
+    ).round(1)
+    resultado = resultado.drop(columns=["__idade_media__", "__qtd_alta__"])
+    return resultado.sort_values("Quantidade", ascending=False).reset_index(drop=True)
 
 
 def distribuicao_coluna_board(df: pd.DataFrame, mapeamento: MapeamentoColunas) -> Optional[pd.DataFrame]:
