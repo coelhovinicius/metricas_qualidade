@@ -46,12 +46,29 @@ CAMPOS_API_PARA_COLUNA = {
     "Microsoft.VSTS.Common.Severity": "Severity",
     "System.AreaPath": "Area Path",
     "System.BoardColumn": "Board Column",
+    # Iteration Path é o nome que o Azure DevOps dá ao campo de Sprint - a
+    # mesma lógica de hierarquia ("Projeto\Sprint 24") já tratada para o
+    # Area Path também se aplica aqui (ver `column_mapper.simplificar_valor_projeto`,
+    # reaproveitado em `_montar_dataframe` para esta coluna).
+    "System.IterationPath": "Sprint",
 }
 
 # Campos auxiliares, buscados na API mas que não viram coluna própria no
 # arquivo final - usados só internamente (ver `_completar_board_column_via_item_pai`).
 _CAMPO_PARENT = "System.Parent"
 _CAMPO_BOARD_COLUMN = "System.BoardColumn"
+
+# Campos ocultos do Azure DevOps que controlam a ordem vertical dos itens
+# dentro de cada Coluna do Board/backlog - "Stack Rank" nos processos Agile/
+# Basic/CMMI, "Backlog Priority" no processo Scrum (o nome depende de qual
+# processo a organização usa; só um dos dois costuma vir preenchido, nunca os
+# dois ao mesmo tempo). Quanto MENOR o valor, mais ACIMA o item fica no board
+# - contraintuitivo, mas é assim que o próprio Azure DevOps funciona. Não
+# aparecem no formulário do work item por padrão, então normalmente não vêm
+# em export manual/CSV - só são buscados aqui, pela API.
+_CAMPO_STACK_RANK = "Microsoft.VSTS.Common.StackRank"
+_CAMPO_BACKLOG_PRIORITY = "Microsoft.VSTS.Common.BacklogPriority"
+COLUNA_PRIORIDADE_BOARD = "Prioridade (posição no board)"
 
 
 class AzureDevOpsError(Exception):
@@ -296,10 +313,16 @@ def _buscar_campos_em_lotes(
 ) -> list[dict]:
     url = f"https://dev.azure.com/{organization}/_apis/wit/workitemsbatch?api-version={API_VERSION}"
     # Por padrão busca todos os campos "de coluna" + o campo auxiliar do item
-    # pai (usado por `_completar_board_column_via_item_pai`) - mas aceita uma
-    # lista de campos menor/diferente pra buscas mais enxutas (ex.: buscar só
-    # a Coluna do Board de um lote de itens pai, sem os outros ~10 campos).
-    campos = campos if campos is not None else list(CAMPOS_API_PARA_COLUNA.keys()) + [_CAMPO_PARENT]
+    # pai (usado por `_completar_board_column_via_item_pai`) + os dois campos
+    # de prioridade por posição no board (só um deles vem preenchido,
+    # dependendo do processo do Azure DevOps - ver `_montar_dataframe`) - mas
+    # aceita uma lista de campos menor/diferente pra buscas mais enxutas (ex.:
+    # buscar só a Coluna do Board de um lote de itens pai, sem os outros campos).
+    campos = (
+        campos
+        if campos is not None
+        else list(CAMPOS_API_PARA_COLUNA.keys()) + [_CAMPO_PARENT, _CAMPO_STACK_RANK, _CAMPO_BACKLOG_PRIORITY]
+    )
     resultados: list[dict] = []
 
     for inicio in range(0, len(ids), TAMANHO_LOTE):
@@ -414,9 +437,18 @@ def _montar_dataframe(itens_api: list[dict]) -> pd.DataFrame:
             elif campo_api == "System.CreatedDate":
                 valor = _formatar_data(valor)
             linha[coluna] = valor
+
+        # Junta Stack Rank / Backlog Priority numa única coluna: só um dos
+        # dois vem preenchido por item (depende do processo do Azure DevOps
+        # da organização), então não há conflito em preferir o Stack Rank
+        # quando, por algum motivo raro, os dois vierem preenchidos.
+        linha[COLUNA_PRIORIDADE_BOARD] = campos.get(_CAMPO_STACK_RANK)
+        if linha[COLUNA_PRIORIDADE_BOARD] is None:
+            linha[COLUNA_PRIORIDADE_BOARD] = campos.get(_CAMPO_BACKLOG_PRIORITY)
+
         linhas.append(linha)
 
-    colunas_ordenadas = list(CAMPOS_API_PARA_COLUNA.values())
+    colunas_ordenadas = list(CAMPOS_API_PARA_COLUNA.values()) + [COLUNA_PRIORIDADE_BOARD]
     df = pd.DataFrame(linhas, columns=colunas_ordenadas)
 
     # Mesma limpeza de texto do core/data_loader.py: remove espaços extras

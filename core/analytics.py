@@ -55,7 +55,7 @@ ROTULO_VAZIO_PADRAO = "Não atribuído(a)"
 # branco/NaN em tabelas e gráficos. Status fica de fora de propósito: já tem
 # seu próprio rótulo estabelecido ("Não informado", aplicado em
 # `distribuicao_status_bruto`).
-_CAMPOS_ROTULAVEIS = ("projeto", "responsavel", "tipo_teste", "severidade", "coluna_board")
+_CAMPOS_ROTULAVEIS = ("projeto", "responsavel", "tipo_teste", "severidade", "coluna_board", "sprint")
 
 _VALORES_CONSIDERADOS_VAZIOS = {"", "nan", "none", "null", "nat", "<na>"}
 
@@ -177,6 +177,9 @@ def preparar_dados(df: pd.DataFrame, mapeamento: MapeamentoColunas) -> pd.DataFr
         - Simplifica a coluna de projeto quando ela vem de uma hierarquia de
           Area Path ou de uma coluna com múltiplos valores (ex.: Tags usada
           como aproximação de projeto);
+        - Simplifica a coluna de Sprint da mesma forma, quando vem de uma
+          hierarquia de Iteration Path (ex.: "Projeto\\Release 1\\Sprint 24"
+          vira só "Sprint 24");
         - Casa a coluna do board com o nome "oficial" da etapa do fluxo
           (ex.: "pronto para qa" e "Pronto Para QA" viram "Pronto para QA"),
           ignorando acentuação e maiúsculas/minúsculas - ver
@@ -210,6 +213,12 @@ def preparar_dados(df: pd.DataFrame, mapeamento: MapeamentoColunas) -> pd.DataFr
 
     if mapeamento.projeto and mapeamento.projeto in df.columns:
         df[mapeamento.projeto] = df[mapeamento.projeto].apply(simplificar_valor_projeto)
+
+    if mapeamento.sprint and mapeamento.sprint in df.columns:
+        # Mesma simplificação de hierarquia usada em Projeto/Area Path: o
+        # Iteration Path do Azure DevOps costuma vir como
+        # "Projeto\Release 1\Sprint 24" - fica só "Sprint 24".
+        df[mapeamento.sprint] = df[mapeamento.sprint].apply(simplificar_valor_projeto)
 
     if mapeamento.coluna_board and mapeamento.coluna_board in df.columns:
         df[mapeamento.coluna_board] = df[mapeamento.coluna_board].apply(canonizar_coluna_board)
@@ -930,6 +939,283 @@ def ranking_itens_mais_antigos_abertos(
         .head(top_n)
         .reset_index(drop=True)
     )
+
+
+def itens_concluidos_por_sprint(
+    df: pd.DataFrame, mapeamento: MapeamentoColunas, top_n: int = 12
+) -> Optional[pd.DataFrame]:
+    """
+    Quantidade de itens concluídos (estado terminal) por Sprint, na ordem
+    cronológica real dos sprints - não alfabética, já que nomes de sprint
+    (ex.: "Sprint 9" viria depois de "Sprint 10" em ordem alfabética/texto)
+    não seguem a ordem cronológica sozinhos.
+
+    Como o Azure DevOps não expõe data de início/fim do sprint pela mesma via
+    já usada por este app (import de work items, não de configuração do
+    Team), a ordem cronológica é aproximada pela data mais antiga
+    (`coluna_data_principal`) entre os itens concluídos de cada sprint - na
+    prática funciona bem, porque os itens de um sprint tendem a ser
+    criados/executados dentro da janela de tempo daquele sprint.
+
+    Limitado aos `top_n` sprints mais recentes (por essa mesma aproximação),
+    para manter o gráfico de comparação legível - sprints mais antigos ficam
+    de fora deste gráfico específico, mas continuam contando normalmente para
+    qualquer outro indicador do dashboard.
+
+    Requer Sprint mapeado, além de status e data (para saber o que está
+    concluído e em que ordem os sprints ficam) - sem algum dos três, retorna
+    `None`.
+    """
+    if not mapeamento.sprint or mapeamento.sprint not in df.columns:
+        return None
+    coluna_data = mapeamento.coluna_data_principal()
+    if not coluna_data or coluna_data not in df.columns:
+        return None
+
+    mascara_aberto = _mascara_itens_em_aberto(df, mapeamento)
+    if mascara_aberto is None:
+        return None
+
+    concluidos = df.loc[~mascara_aberto].copy()
+    concluidos = concluidos[concluidos[mapeamento.sprint].notna() & (concluidos[mapeamento.sprint] != ROTULO_VAZIO_PADRAO)]
+    if concluidos.empty:
+        return pd.DataFrame(columns=["Sprint", "Quantidade"])
+
+    concluidos["__data_ordenacao__"] = pd.to_datetime(concluidos[coluna_data], errors="coerce")
+
+    ordem_sprints = (
+        concluidos.groupby(mapeamento.sprint)["__data_ordenacao__"]
+        .min()
+        .sort_values()
+        .index.tolist()
+    )
+    ordem_sprints = ordem_sprints[-top_n:]
+
+    resultado = (
+        concluidos[concluidos[mapeamento.sprint].isin(ordem_sprints)]
+        .groupby(mapeamento.sprint)
+        .size()
+        .reindex(ordem_sprints, fill_value=0)
+        .reset_index()
+    )
+    resultado.columns = ["Sprint", "Quantidade"]
+    return resultado
+
+
+def ranking_prioridade_board(
+    df: pd.DataFrame, mapeamento: MapeamentoColunas, top_n_por_coluna: int = 10
+) -> Optional[pd.DataFrame]:
+    """
+    Ranking dos itens em aberto dentro de cada Coluna do Board, ordenados
+    pela posição real que ocupam no board do Azure DevOps - do topo (maior
+    prioridade, Posição 1) para baixo.
+
+    Usa o campo oculto do Azure DevOps conhecido como "Stack Rank" (processos
+    Agile/Basic/CMMI) ou "Backlog Priority" (processo Scrum) - é ele que
+    controla a ordem vertical dos itens dentro de cada coluna do
+    board/backlog, e funciona ao contrário do que a intuição sugere: quanto
+    MENOR o valor numérico do campo, mais ACIMA o item fica (maior
+    prioridade). Ver `core/azure_devops_client.py` (COLUNA_PRIORIDADE_BOARD)
+    - esse campo só é buscado pela integração automática com a API do Azure
+    DevOps; normalmente não vem em export manual/CSV, porque fica escondido
+    do formulário do work item por padrão no Azure DevOps.
+
+    Requer `mapeamento.prioridade_board` E `mapeamento.coluna_board`
+    mapeados, além de status (para isolar só os itens em aberto) - sem algum
+    dos três, retorna `None`. Itens sem valor numérico válido de prioridade,
+    ou sem Coluna do Board preenchida, são excluídos do ranking (não tem como
+    posicioná-los sem essa informação).
+    """
+    if not mapeamento.prioridade_board or mapeamento.prioridade_board not in df.columns:
+        return None
+    if not mapeamento.coluna_board or mapeamento.coluna_board not in df.columns:
+        return None
+
+    mascara_aberto = _mascara_itens_em_aberto(df, mapeamento)
+    if mascara_aberto is None:
+        return None
+
+    trabalho = df.loc[mascara_aberto].copy()
+    trabalho = trabalho[trabalho[mapeamento.coluna_board] != ROTULO_VAZIO_PADRAO]
+    trabalho["__prioridade_numerica__"] = pd.to_numeric(trabalho[mapeamento.prioridade_board], errors="coerce")
+    trabalho = trabalho[trabalho["__prioridade_numerica__"].notna()]
+
+    colunas_saida = ["Coluna do Board", "Posição", "Status", "Responsável", "Prioridade (valor bruto)"]
+    if trabalho.empty:
+        return pd.DataFrame(columns=colunas_saida)
+
+    trabalho["Status"] = (
+        trabalho["__status_bruto__"] if "__status_bruto__" in trabalho.columns else trabalho[mapeamento.status]
+    )
+    trabalho["Responsável"] = (
+        trabalho[mapeamento.responsavel]
+        if mapeamento.responsavel and mapeamento.responsavel in trabalho.columns
+        else "—"
+    )
+    if mapeamento.projeto and mapeamento.projeto in trabalho.columns:
+        trabalho["Projeto"] = trabalho[mapeamento.projeto]
+        colunas_saida = ["Projeto"] + colunas_saida
+
+    partes = []
+    for valor_coluna_board, grupo in trabalho.groupby(mapeamento.coluna_board, dropna=False):
+        grupo_ordenado = grupo.sort_values("__prioridade_numerica__", ascending=True).head(top_n_por_coluna).copy()
+        grupo_ordenado["Posição"] = range(1, len(grupo_ordenado) + 1)
+        grupo_ordenado["Coluna do Board"] = valor_coluna_board
+        partes.append(grupo_ordenado)
+
+    resultado = pd.concat(partes, ignore_index=True)
+    resultado["Prioridade (valor bruto)"] = resultado["__prioridade_numerica__"]
+    resultado["__ordem_coluna__"] = resultado["Coluna do Board"].apply(ordem_coluna_board)
+    resultado = resultado.sort_values(["__ordem_coluna__", "Posição"]).reset_index(drop=True)
+    return resultado[colunas_saida]
+
+
+# Níveis da severidade calculada, do mais grave (topo da coluna) para o menos
+# grave (fundo da coluna) - nomes e quantidade (4) definidos junto com o
+# usuário para este indicador especificamente; não tem relação com os
+# valores que o campo manual "Severity" do Azure DevOps costuma usar.
+NIVEIS_SEVERIDADE_CALCULADA: tuple[str, ...] = ("Crítica", "Alta", "Média", "Baixa")
+
+
+def _bucket_severidade_calculada(posicao: int, total_na_coluna: int, niveis: tuple[str, ...]) -> str:
+    """
+    Converte a posição de um item (1 = topo da coluna) dentro de uma coluna
+    do board com `total_na_coluna` itens em um dos `niveis`, proporcionalmente
+    ao tamanho da coluna - não por faixas fixas de posição.
+
+    Fórmula: `indice = floor((posicao - 1) * len(niveis) / total_na_coluna)`,
+    com `indice` sempre em `[0, len(niveis) - 1]` (o `min()` abaixo é só uma
+    proteção defensiva contra arredondamento; matematicamente o resultado já
+    fica sempre abaixo de `len(niveis)`).
+
+    Por que proporcional em vez de faixa fixa (ex.: "posição 1-2 = Crítica"):
+    uma coluna com 2 itens não deve ter os dois em "Crítica" só porque ambos
+    são "top 2" - o segundo item, ali, é o ÚLTIMO da coluna, não deveria levar
+    o mesmo peso do primeiro. Com a fórmula proporcional:
+      - Coluna com 1 item: fica em "Crítica" (é o topo E o fundo ao mesmo tempo).
+      - Coluna com 2 itens: 1º = "Crítica", 2º = "Média" (nunca os dois iguais).
+      - Coluna com 4 itens (= número de níveis): cada item cai em um nível
+        diferente, um a um.
+      - Coluna com muitos itens (ex.: 20): a distribuição se aproxima de 25%
+        por nível, com os últimos itens da coluna sempre caindo em "Baixa".
+    """
+    indice = ((posicao - 1) * len(niveis)) // total_na_coluna
+    indice = min(indice, len(niveis) - 1)
+    return niveis[indice]
+
+
+def severidade_calculada_por_posicao(
+    df: pd.DataFrame,
+    mapeamento: MapeamentoColunas,
+    niveis: tuple[str, ...] = NIVEIS_SEVERIDADE_CALCULADA,
+) -> Optional[pd.DataFrame]:
+    """
+    Atribui a cada item em aberto uma "Severidade Calculada" derivada da
+    posição real dele dentro da própria Coluna do Board (topo = mais grave),
+    em vez do campo manual "Severity" do Azure DevOps (ver `distribuicao_severidade`,
+    que continua existindo e não é afetada por esta função).
+
+    Reaproveita exatamente a mesma base de dados/regras de elegibilidade que
+    `ranking_prioridade_board` (mesmos campos obrigatórios, mesmo filtro de
+    itens em aberto, mesma exclusão de itens sem Coluna do Board ou sem valor
+    numérico de prioridade válido) - a diferença é que aqui NÃO existe corte
+    de `top_n_por_coluna`: o cálculo precisa considerar TODOS os itens de
+    cada coluna para saber o tamanho real do grupo (`total_na_coluna`), senão
+    a proporção ficaria errada.
+
+    Requer `mapeamento.prioridade_board` E `mapeamento.coluna_board`
+    mapeados (só disponível para dados importados pela busca automática do
+    Azure DevOps - o campo de prioridade por posição no board não vem em
+    upload manual de CSV/TXT) - sem algum dos dois, retorna `None`.
+
+    Ver `_bucket_severidade_calculada` para a fórmula de conversão
+    posição -> nível.
+    """
+    if not mapeamento.prioridade_board or mapeamento.prioridade_board not in df.columns:
+        return None
+    if not mapeamento.coluna_board or mapeamento.coluna_board not in df.columns:
+        return None
+
+    mascara_aberto = _mascara_itens_em_aberto(df, mapeamento)
+    if mascara_aberto is None:
+        return None
+
+    trabalho = df.loc[mascara_aberto].copy()
+    trabalho = trabalho[trabalho[mapeamento.coluna_board] != ROTULO_VAZIO_PADRAO]
+    trabalho["__prioridade_numerica__"] = pd.to_numeric(trabalho[mapeamento.prioridade_board], errors="coerce")
+    trabalho = trabalho[trabalho["__prioridade_numerica__"].notna()]
+
+    colunas_saida = [
+        "Coluna do Board", "Posição", "Total na Coluna", "Severidade Calculada", "Status", "Responsável",
+    ]
+    if trabalho.empty:
+        return pd.DataFrame(columns=colunas_saida)
+
+    trabalho["Status"] = (
+        trabalho["__status_bruto__"] if "__status_bruto__" in trabalho.columns else trabalho[mapeamento.status]
+    )
+    trabalho["Responsável"] = (
+        trabalho[mapeamento.responsavel]
+        if mapeamento.responsavel and mapeamento.responsavel in trabalho.columns
+        else "—"
+    )
+    if mapeamento.projeto and mapeamento.projeto in trabalho.columns:
+        trabalho["Projeto"] = trabalho[mapeamento.projeto]
+        colunas_saida = ["Projeto"] + colunas_saida
+
+    partes = []
+    for valor_coluna_board, grupo in trabalho.groupby(mapeamento.coluna_board, dropna=False):
+        grupo_ordenado = grupo.sort_values("__prioridade_numerica__", ascending=True).copy()
+        total_na_coluna = len(grupo_ordenado)
+        grupo_ordenado["Posição"] = range(1, total_na_coluna + 1)
+        grupo_ordenado["Total na Coluna"] = total_na_coluna
+        grupo_ordenado["Severidade Calculada"] = [
+            _bucket_severidade_calculada(posicao, total_na_coluna, niveis)
+            for posicao in grupo_ordenado["Posição"]
+        ]
+        grupo_ordenado["Coluna do Board"] = valor_coluna_board
+        partes.append(grupo_ordenado)
+
+    resultado = pd.concat(partes, ignore_index=True)
+    resultado["__ordem_coluna__"] = resultado["Coluna do Board"].apply(ordem_coluna_board)
+    resultado = resultado.sort_values(["__ordem_coluna__", "Posição"]).reset_index(drop=True)
+    return resultado[colunas_saida]
+
+
+def distribuicao_severidade_calculada(
+    df: pd.DataFrame,
+    mapeamento: MapeamentoColunas,
+    niveis: tuple[str, ...] = NIVEIS_SEVERIDADE_CALCULADA,
+) -> Optional[pd.DataFrame]:
+    """
+    Contagem de itens em aberto por "Severidade Calculada" (ver
+    `severidade_calculada_por_posicao`), pronta para um gráfico de
+    distribuição NOVO e SEPARADO do gráfico "Distribuição por
+    Severidade/Prioridade" já existente (que usa o campo manual "Severity") -
+    por escolha explícita do usuário, este indicador não substitui nem altera
+    aquele.
+
+    Ordem das categorias no resultado segue sempre `niveis` (Crítica -> Alta
+    -> Média -> Baixa por padrão), mesmo quando algum nível tem 0 itens -
+    assim o gráfico sempre mostra as 4 categorias na mesma ordem/posição,
+    em vez de reordenar por quantidade a cada filtro aplicado.
+    """
+    detalhado = severidade_calculada_por_posicao(df, mapeamento, niveis=niveis)
+    if detalhado is None:
+        return None
+    colunas_saida = ["Severidade Calculada", "Quantidade"]
+    if detalhado.empty:
+        resultado = pd.DataFrame({"Severidade Calculada": list(niveis), "Quantidade": [0] * len(niveis)})
+        return resultado[colunas_saida]
+
+    resultado = (
+        detalhado.groupby("Severidade Calculada")
+        .size()
+        .reindex(niveis, fill_value=0)
+        .reset_index()
+    )
+    resultado.columns = colunas_saida
+    return resultado
 
 
 def bugs_abertos_vs_solucionados(

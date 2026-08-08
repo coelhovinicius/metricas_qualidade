@@ -85,6 +85,19 @@ PALAVRAS_CHAVE: dict[str, list[str]] = {
         "quadro kanban",
         "kanban board",
     ],
+    "sprint": ["sprint", "iteration path", "iteration"],
+    # Distinto de "severidade" (que também casa com "prioridade"): este campo
+    # é especificamente a posição vertical do item dentro da Coluna do Board
+    # (Stack Rank/Backlog Priority do Azure DevOps), não a prioridade
+    # manual 1-4. Ver `core/azure_devops_client.py` (COLUNA_PRIORIDADE_BOARD)
+    # para a origem mais comum desta coluna.
+    "prioridade_board": [
+        "stack rank",
+        "backlog priority",
+        "posicao no board",
+        "prioridade board",
+        "prioridade (posicao no board)",
+    ],
 }
 
 # Palavras curtas (<=3 caracteres) só devem "casar" como token isolado, para
@@ -182,6 +195,8 @@ class MapeamentoColunas:
     caso_teste: Optional[str] = None
     severidade: Optional[str] = None
     coluna_board: Optional[str] = None
+    sprint: Optional[str] = None
+    prioridade_board: Optional[str] = None
     campos_personalizados: dict[str, str] = field(default_factory=dict)
     confianca: dict[str, float] = field(default_factory=dict)
 
@@ -198,6 +213,8 @@ class MapeamentoColunas:
             "caso_teste": self.caso_teste,
             "severidade": self.severidade,
             "coluna_board": self.coluna_board,
+            "sprint": self.sprint,
+            "prioridade_board": self.prioridade_board,
         }
 
     def coluna_data_principal(self) -> Optional[str]:
@@ -221,8 +238,17 @@ def detectar_mapeamento(df: pd.DataFrame) -> MapeamentoColunas:
         "responsavel",
         "criado_por",
         "caso_teste",
+        # "prioridade_board" precisa vir ANTES de "severidade": a palavra-chave
+        # "prioridade" de "severidade" também casaria com uma coluna chamada
+        # "Prioridade (posição no board)" (ver COLUNA_PRIORIDADE_BOARD em
+        # core/azure_devops_client.py) - processar prioridade_board primeiro
+        # garante que essa coluna específica seja reconhecida corretamente,
+        # deixando "severidade" livre para casar com um campo "Priority"/
+        # "Severity" comum, se existir um separado.
+        "prioridade_board",
         "severidade",
         "coluna_board",
+        "sprint",
     ]
 
     for campo in ordem_campos:

@@ -6,6 +6,16 @@ from typing import Optional
 
 import streamlit as st
 
+from auth.auth_manager import AuthManager
+from core.logs_sistema import (
+    ROTULOS_TIPO_LOG,
+    TIPO_ERRO,
+    TIPO_LOGIN,
+    TIPO_PAINEL,
+    limpar_logs_antigos,
+    listar_logs,
+    registrar_log,
+)
 from core.solicitacoes_conta import (
     STATUS_CRIADA,
     STATUS_PENDENTE,
@@ -19,6 +29,16 @@ from core.solicitacoes_conta import (
 )
 from core.turso_client import TursoError
 from ui.components import action_button, finish_action, loading_overlay, render_header
+
+# Rótulo (em português, pronto pra exibir) de cada mudança de status possível
+# numa solicitação de conta - usado só pra montar a mensagem do log de
+# auditoria em `_confirmar_acao` (ver `core/logs_sistema.py`).
+_ROTULOS_ACAO_LOG = {
+    STATUS_CRIADA: "marcou como criada",
+    STATUS_REJEITADA: "rejeitou",
+    STATUS_REVOGADA: "revogou o acesso de",
+    STATUS_PENDENTE: "moveu de volta para pendentes",
+}
 
 # Usuário (login, não o nome de exibição) tratado como administrador. Hoje só
 # você tem esse acesso - se quiser dar acesso ao painel pra outro usuário
@@ -48,8 +68,8 @@ def _email_protegido_de_revogacao(email: str) -> bool:
 
 def render_admin_page() -> None:
     render_header(
-        titulo="Painel Administrativo",
-        subtitulo="Solicitações de criação de conta recebidas pela tela de login.",
+        titulo="Administração",
+        subtitulo="Solicitações de acesso e logs do sistema — visível só para o administrador.",
     )
 
     with st.expander("Diagnóstico da conexão com o banco de dados (Turso)"):
@@ -67,6 +87,20 @@ def render_admin_page() -> None:
             else:
                 st.success("Conexão com o banco de dados funcionando normalmente.")
 
+    # Duas áreas dentro do mesmo menu "Administração", em abas em vez de uma
+    # embaixo da outra na mesma rolagem - "Solicitações de Acesso" (criação/
+    # revogação de conta) e "Logs do Sistema" (auditoria/erros/acessos) usam o
+    # mesmo banco (Turso) mas são assuntos distintos no dia a dia.
+    aba_solicitacoes, aba_logs = st.tabs(["📋 Solicitações de Acesso", "🗒️ Logs do Sistema"])
+
+    with aba_solicitacoes:
+        _renderizar_secao_solicitacoes()
+
+    with aba_logs:
+        _renderizar_secao_logs()
+
+
+def _renderizar_secao_solicitacoes() -> None:
     try:
         pendentes = listar_solicitacoes(status=STATUS_PENDENTE)
         criadas = listar_solicitacoes(status=STATUS_CRIADA)
@@ -89,54 +123,163 @@ def render_admin_page() -> None:
     for solicitacao in pendentes:
         _renderizar_cartao_solicitacao(solicitacao, mostrar_acoes_pendente=True)
 
-    with st.expander(f"Já criadas ({len(criadas)})"):
-        if criadas:
-            st.caption(
-                "Revogar aqui só atualiza o status neste painel (controle/auditoria) - "
-                "lembre de também remover o acesso de verdade (apagando o usuário ou trocando "
-                "a senha) nos Secrets do Streamlit — ou em `auth/users.yaml`, se essa conta "
-                "ainda estiver só no arquivo local —, já que a criação/remoção de conta "
-                "continua manual, fora deste app."
-            )
-        else:
-            st.caption("Nenhuma ainda.")
-        for solicitacao in criadas:
-            _renderizar_cartao_solicitacao(solicitacao, mostrar_revogar=True)
+    # "Já criadas" / "Revogadas" / "Rejeitadas" lado a lado em duas colunas
+    # (em vez de empilhadas uma embaixo da outra) - preenche esquerda, direita,
+    # esquerda, igual à ordem em que já apareciam antes. "Pendentes" acima
+    # continua de largura total, fora dessa grade, por ser a seção mais
+    # urgente/acionável da página. As colunas são criadas uma vez só e
+    # reaproveitadas nos três `with` abaixo - cada bloco novo escrito na mesma
+    # coluna empilha por baixo do anterior dela, sem afetar a outra coluna.
+    col_esquerda, col_direita = st.columns(2, gap="medium")
 
-    with st.expander(f"Revogadas ({len(revogadas)})"):
-        if revogadas:
-            st.caption(
-                "\"Reverter revogação\" manda de volta para \"Pendentes\" (não direto para "
-                "\"Já criadas\") - assim você reconfirma que a conta foi mesmo recriada nos "
-                "Secrets (ou em `auth/users.yaml` local) antes de marcar como criada de novo. "
-                "\"Excluir\" apaga o registro desta solicitação de vez, sem afetar o acesso "
-                "real de ninguém. Use as caixas de seleção pra excluir várias de uma vez, em "
-                "vez de uma por uma."
-            )
-        else:
-            st.caption("Nenhuma ainda.")
-        _controles_selecao_em_massa("revogadas", revogadas)
-        for solicitacao in revogadas:
-            _renderizar_cartao_solicitacao(
-                solicitacao, mostrar_reverter=True, mostrar_excluir=True, mostrar_selecao=True,
-            )
-        _botao_excluir_selecionadas("revogadas", revogadas)
+    with col_esquerda:
+        with st.expander(f"Já criadas ({len(criadas)})"):
+            if criadas:
+                st.caption(
+                    "Revogar aqui só atualiza o status neste painel (controle/auditoria) - "
+                    "lembre de também remover o acesso de verdade (apagando o usuário ou trocando "
+                    "a senha) nos Secrets do Streamlit — ou em `auth/users.yaml`, se essa conta "
+                    "ainda estiver só no arquivo local —, já que a criação/remoção de conta "
+                    "continua manual, fora deste app."
+                )
+            else:
+                st.caption("Nenhuma ainda.")
+            for solicitacao in criadas:
+                _renderizar_cartao_solicitacao(solicitacao, mostrar_revogar=True)
 
-    with st.expander(f"Rejeitadas ({len(rejeitadas)})"):
-        if rejeitadas:
-            st.caption(
-                "\"Recuperar\" manda de volta para \"Pendentes\", caso a rejeição tenha sido "
-                "engano. \"Excluir\" apaga o registro desta solicitação de vez. Use as caixas "
-                "de seleção pra excluir várias de uma vez, em vez de uma por uma."
-            )
+    with col_direita:
+        with st.expander(f"Revogadas ({len(revogadas)})"):
+            if revogadas:
+                st.caption(
+                    "\"Reverter revogação\" manda de volta para \"Pendentes\" (não direto para "
+                    "\"Já criadas\") - assim você reconfirma que a conta foi mesmo recriada nos "
+                    "Secrets (ou em `auth/users.yaml` local) antes de marcar como criada de novo. "
+                    "\"Excluir\" apaga o registro desta solicitação de vez, sem afetar o acesso "
+                    "real de ninguém. Use as caixas de seleção pra excluir várias de uma vez, em "
+                    "vez de uma por uma."
+                )
+            else:
+                st.caption("Nenhuma ainda.")
+            _controles_selecao_em_massa("revogadas", revogadas)
+            for solicitacao in revogadas:
+                _renderizar_cartao_solicitacao(
+                    solicitacao, mostrar_reverter=True, mostrar_excluir=True, mostrar_selecao=True,
+                )
+            _botao_excluir_selecionadas("revogadas", revogadas)
+
+    with col_esquerda:
+        with st.expander(f"Rejeitadas ({len(rejeitadas)})"):
+            if rejeitadas:
+                st.caption(
+                    "\"Recuperar\" manda de volta para \"Pendentes\", caso a rejeição tenha sido "
+                    "engano. \"Excluir\" apaga o registro desta solicitação de vez. Use as caixas "
+                    "de seleção pra excluir várias de uma vez, em vez de uma por uma."
+                )
+            else:
+                st.caption("Nenhuma ainda.")
+            _controles_selecao_em_massa("rejeitadas", rejeitadas)
+            for solicitacao in rejeitadas:
+                _renderizar_cartao_solicitacao(
+                    solicitacao, mostrar_recuperar=True, mostrar_excluir=True, mostrar_selecao=True,
+                )
+            _botao_excluir_selecionadas("rejeitadas", rejeitadas)
+
+
+def _renderizar_secao_logs() -> None:
+    """
+    Aba "Logs do Sistema": três sub-abas (uma por categoria, ver
+    `core/logs_sistema.py`) com as entradas mais recentes de cada uma. A
+    tabela de logs é criada sozinha no banco na primeira vez que é preciso
+    (mesma lógica que já existe pra solicitações de conta) - não exige
+    nenhuma configuração além dos Secrets do Turso que o resto do painel já
+    usa.
+    """
+    st.caption(
+        "Histórico técnico/de auditoria do app. **Ações no Painel** registra o que cada "
+        "administrador faz nas solicitações de conta (marcar como criada, revogar, "
+        "rejeitar, excluir...) - hoje só dava pra ver o status atual de cada uma, sem saber "
+        "quando/quem mudou o quê. **Erros Técnicos** guarda falhas capturadas durante o uso "
+        "do app (ex.: falha ao buscar do Azure DevOps, erro inesperado em alguma página) - "
+        "útil pra diagnosticar problemas sem depender só da mensagem amigável que aparece "
+        "pra quem estava usando. **Login/Acessos** registra toda tentativa de entrar no "
+        "app, com sucesso ou não."
+    )
+
+    aba_painel, aba_erro, aba_login = st.tabs([
+        f"🗂️ {ROTULOS_TIPO_LOG[TIPO_PAINEL]}",
+        f"⚠️ {ROTULOS_TIPO_LOG[TIPO_ERRO]}",
+        f"🔑 {ROTULOS_TIPO_LOG[TIPO_LOGIN]}",
+    ])
+    with aba_painel:
+        _renderizar_aba_log(TIPO_PAINEL)
+    with aba_erro:
+        _renderizar_aba_log(TIPO_ERRO, mostrar_detalhes=True)
+    with aba_login:
+        _renderizar_aba_log(TIPO_LOGIN)
+
+
+def _renderizar_aba_log(tipo: str, mostrar_detalhes: bool = False) -> None:
+    """
+    Desenha uma aba de log: seletor de quantas entradas mostrar, botão de
+    atualizar, a lista em si (tabela, ou cartões expansíveis quando
+    `mostrar_detalhes=True` - usado só em "Erros Técnicos", porque o campo
+    `detalhes` costuma trazer um traceback longo, que polui uma tabela) e,
+    por último, a limpeza de entradas antigas.
+    """
+    col_limite, col_atualizar = st.columns([3, 1])
+    with col_limite:
+        limite = st.select_slider(
+            "Quantas entradas mais recentes mostrar",
+            options=[50, 100, 200, 500],
+            value=100,
+            key=f"logs_limite_{tipo}",
+        )
+    with col_atualizar:
+        st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+        if st.button("🔄 Atualizar", key=f"logs_atualizar_{tipo}", use_container_width=True):
+            st.rerun()
+
+    try:
+        logs = listar_logs(tipo=tipo, limite=limite)
+    except TursoError as erro:
+        st.error(str(erro))
+        return
+
+    if not logs:
+        st.caption("Nenhum registro ainda.")
+    else:
+        st.caption(f"Mostrando {len(logs)} entrada(s) mais recente(s) (mais nova primeiro).")
+
+        if mostrar_detalhes:
+            for log in logs:
+                with st.expander(f"{log.criado_em} (UTC) · {log.mensagem}"):
+                    st.caption(f"Usuário: {log.usuario or '—'}")
+                    if log.detalhes:
+                        st.code(log.detalhes, language="text")
         else:
-            st.caption("Nenhuma ainda.")
-        _controles_selecao_em_massa("rejeitadas", rejeitadas)
-        for solicitacao in rejeitadas:
-            _renderizar_cartao_solicitacao(
-                solicitacao, mostrar_recuperar=True, mostrar_excluir=True, mostrar_selecao=True,
+            st.dataframe(
+                [
+                    {"Data/Hora (UTC)": log.criado_em, "Usuário": log.usuario or "—", "Mensagem": log.mensagem}
+                    for log in logs
+                ],
+                use_container_width=True,
+                hide_index=True,
             )
-        _botao_excluir_selecionadas("rejeitadas", rejeitadas)
+
+    with st.expander("Limpar entradas antigas"):
+        dias = st.number_input(
+            "Apagar entradas desta categoria com mais de quantos dias?",
+            min_value=1, value=90, step=1, key=f"logs_dias_limpar_{tipo}",
+        )
+        if st.button("🗑️ Limpar entradas antigas", key=f"logs_limpar_{tipo}"):
+            with loading_overlay("Limpando logs antigos, aguarde..."):
+                try:
+                    apagados = limpar_logs_antigos(int(dias), tipo=tipo)
+                except TursoError as erro:
+                    st.error(str(erro))
+                else:
+                    st.success(f"{apagados} entrada(s) apagada(s).")
+                    st.rerun()
 
 
 def _chave_selecao(id_solicitacao: int) -> str:
@@ -216,6 +359,11 @@ def _confirmar_exclusao_em_massa(selecionadas: list[SolicitacaoConta]) -> None:
             for solicitacao in selecionadas:
                 excluir_solicitacao(solicitacao.id)
                 st.session_state.pop(_chave_selecao(solicitacao.id), None)
+        nomes = ", ".join(f"{s.nome} ({s.email})" for s in selecionadas)
+        registrar_log(
+            TIPO_PAINEL, AuthManager.current_username(),
+            f"Excluiu em massa {len(selecionadas)} solicitação(ões): {nomes}",
+        )
         finish_action(chave_confirmar)
         st.rerun()
     if cancelar:
@@ -266,8 +414,15 @@ def _confirmar_acao(
         with loading_overlay("Aplicando alteração, aguarde..."):
             if excluir:
                 excluir_solicitacao(solicitacao.id)
+                mensagem_log = f"Excluiu a solicitação de {solicitacao.nome} ({solicitacao.email})"
             else:
                 atualizar_status(solicitacao.id, novo_status)
+                rotulo_acao = _ROTULOS_ACAO_LOG.get(novo_status, f"mudou o status para '{novo_status}' de")
+                mensagem_log = (
+                    f"{rotulo_acao[0].upper()}{rotulo_acao[1:]} a solicitação de "
+                    f"{solicitacao.nome} ({solicitacao.email})"
+                )
+        registrar_log(TIPO_PAINEL, AuthManager.current_username(), mensagem_log)
         finish_action(chave_confirmar)
         st.rerun()
     if cancelar:

@@ -105,6 +105,12 @@ def _aplicar_filtros_sidebar(
         if selecionados:
             df_filtrado = df_filtrado[df_filtrado[mapeamento.projeto].astype(str).isin(selecionados)]
 
+    if mapeamento.sprint and mapeamento.sprint in df.columns:
+        sprints = sorted(df_filtrado[mapeamento.sprint].dropna().astype(str).unique().tolist())
+        sprints_selecionados = st.sidebar.multiselect("Sprint", sprints, default=sprints, key="filtro_sprint")
+        if sprints_selecionados:
+            df_filtrado = df_filtrado[df_filtrado[mapeamento.sprint].astype(str).isin(sprints_selecionados)]
+
     if mapeamento.tipo_teste and mapeamento.tipo_teste in df.columns:
         tipos = sorted(df_filtrado[mapeamento.tipo_teste].dropna().astype(str).unique().tolist())
         tipos_selecionados = st.sidebar.multiselect("Tipos de Teste", tipos, default=tipos, key="filtro_tipo_teste")
@@ -485,6 +491,32 @@ def render_dashboard_page() -> None:
                 st.dataframe(df_mais_antigos, use_container_width=True)
         st.divider()
 
+    # ------------------------------------------------------------- Sprints
+    df_velocidade_sprint = analytics.itens_concluidos_por_sprint(df_filtrado, mapeamento)
+    if df_velocidade_sprint is not None and not df_velocidade_sprint.empty:
+        st.markdown("**Sprints — Itens Concluídos**")
+        st.caption(
+            "Quantos itens foram concluídos em cada sprint, dos mais antigos para o mais "
+            "recente (aproximado pela data mais antiga dos itens de cada sprint, já que o "
+            "Azure DevOps não informa data de início/fim de sprint por esta via) - use para "
+            "acompanhar se a equipe está entregando mais ou menos a cada sprint."
+        )
+        sprint_mais_recente = df_velocidade_sprint.iloc[-1]
+        media_por_sprint = df_velocidade_sprint["Quantidade"].mean()
+        render_kpi_row([
+            ("Sprint Mais Recente", str(sprint_mais_recente["Sprint"]), None, True),
+            ("Concluídos no Sprint Mais Recente", f"{int(sprint_mais_recente['Quantidade']):,}".replace(",", "."), None, True),
+            ("Média por Sprint", f"{media_por_sprint:.1f}".replace(".", ","), None, True),
+        ])
+        col_tipo_sprint, _col_espaco_sprint = st.columns([1, 3])
+        with col_tipo_sprint:
+            tipo_sprint = _selecionar_tipo_grafico("sprint_velocidade", ["Barras", "Linha", "Área"])
+        _plotar(
+            df_velocidade_sprint, tipo_sprint, x="Sprint", y="Quantidade", chave="sprint_velocidade",
+            titulo="Sprints — Itens Concluídos", secoes_pdf=secoes_pdf,
+        )
+        st.divider()
+
     # ------------------------------------------ Planejamento vs Efetivado
     df_planejamento = analytics.planejamento_vs_efetivado(df_filtrado, mapeamento)
     if df_planejamento is not None:
@@ -755,6 +787,60 @@ def render_dashboard_page() -> None:
             )
             st.divider()
 
+        # ------------------------------------------------- Prioridade no Board
+        df_prioridade_board = analytics.ranking_prioridade_board(df_filtrado, mapeamento)
+        if df_prioridade_board is not None and not df_prioridade_board.empty:
+            st.markdown("**Prioridade Dentro do Board**")
+            st.caption(
+                "Ranking dos itens em aberto, na ordem real de cima para baixo dentro de cada "
+                "coluna do board (Posição 1 = topo da coluna = maior prioridade) - usa o campo "
+                "oculto do Azure DevOps (Stack Rank/Backlog Priority) que controla essa ordem "
+                "vertical. Só disponível para dados importados pela busca automática do Azure "
+                "DevOps (não aparece em upload manual de CSV/TXT)."
+            )
+            with st.expander("Ver ranking de prioridade por coluna do board", expanded=False):
+                st.dataframe(df_prioridade_board, use_container_width=True)
+            st.divider()
+
+            # ------------------------------------------- Severidade Calculada (posição no board)
+            df_severidade_calculada = analytics.distribuicao_severidade_calculada(df_filtrado, mapeamento)
+            if df_severidade_calculada is not None and df_severidade_calculada["Quantidade"].sum() > 0:
+                st.markdown("**Severidade Calculada (posição no board)**")
+                st.caption(
+                    "Gráfico novo, separado do campo manual \"Severity\" (ver **Distribuição por "
+                    "Severidade/Prioridade** acima, que continua igual) - aqui a severidade é "
+                    "CALCULADA a partir de onde cada item em aberto está posicionado dentro da "
+                    "própria Coluna do Board, do topo (mais grave) para o fundo (menos grave), de "
+                    "forma proporcional ao tamanho de cada coluna: uma coluna com só 2 itens não "
+                    "joga os dois para \"Crítica\" - o 1º fica \"Crítica\" e o 2º \"Média\", por "
+                    "exemplo -, e colunas maiores se espalham pelos 4 níveis "
+                    f"({', '.join(analytics.NIVEIS_SEVERIDADE_CALCULADA)}). Usa a mesma base de "
+                    "dados do ranking acima (Stack Rank/Backlog Priority)."
+                )
+                col_sev_calc, _col_espaco_sev_calc = st.columns([1, 3])
+                with col_sev_calc:
+                    tipo_severidade_calculada = _selecionar_tipo_grafico(
+                        "severidade_calculada", ["Pizza", "Rosca", "Barras", "Barras Horizontais"]
+                    )
+                _plotar(
+                    df_severidade_calculada, tipo_severidade_calculada,
+                    x="Severidade Calculada", y="Quantidade", chave="severidade_calculada",
+                    ordem_categorias={"Severidade Calculada": list(analytics.NIVEIS_SEVERIDADE_CALCULADA)},
+                    titulo="Severidade Calculada (posição no board)", secoes_pdf=secoes_pdf,
+                )
+                with st.expander("Ver detalhamento item a item da Severidade Calculada", expanded=False):
+                    st.dataframe(
+                        analytics.severidade_calculada_por_posicao(df_filtrado, mapeamento),
+                        use_container_width=True,
+                    )
+                st.divider()
+        elif mapeamento.coluna_board and not mapeamento.prioridade_board:
+            st.caption(
+                "💡 Este arquivo não tem o campo de prioridade por posição no board mapeado - "
+                "esse ranking só fica disponível importando os dados pela busca automática do "
+                "Azure DevOps (aba **Importar Dados**)."
+            )
+
     # ------------------------------------------------- Volume de Testes por Responsável
     if mapeamento.responsavel and mapeamento.responsavel in df_filtrado.columns:
         st.markdown("**Volume de Testes por Responsável**")
@@ -846,7 +932,23 @@ def render_dashboard_page() -> None:
         "navegador dedicado só pra essa etapa (algo que só acontece se nenhum navegador "
         "compatível já estiver instalado na máquina)."
     )
-    gerar_pdf = action_button("📄 Gerar PDF do relatório", key="btn_gerar_pdf_relatorio")
+    # "Baixar PDF gerado" ao lado de "Gerar PDF do relatório" (em vez de
+    # embaixo) assim que o PDF já existir em `st.session_state` - antes
+    # disso, a coluna da direita simplesmente fica vazia (só "Gerar PDF do
+    # relatório" aparece). A 3ª coluna é só espaço vazio, pra os dois botões
+    # não esticarem a largura toda nem ficarem colados um no outro.
+    col_gerar_pdf, col_baixar_pdf, _col_espaco_pdf = st.columns([1, 1, 2])
+    with col_gerar_pdf:
+        gerar_pdf = action_button("📄 Gerar PDF do relatório", key="btn_gerar_pdf_relatorio")
+    with col_baixar_pdf:
+        if st.session_state.get("pdf_relatorio_bytes"):
+            st.download_button(
+                "⬇️ Baixar PDF gerado",
+                data=st.session_state["pdf_relatorio_bytes"],
+                file_name=st.session_state.get("pdf_relatorio_nome", "relatorio_qa.pdf"),
+                mime="application/pdf",
+            )
+
     if gerar_pdf:
         # Import local (não no topo do arquivo): evita carregar reportlab/kaleido
         # toda vez que a página do dashboard é aberta, mesmo por quem nunca
@@ -884,14 +986,6 @@ def render_dashboard_page() -> None:
     if st.session_state.get("pdf_relatorio_erro"):
         st.error(st.session_state["pdf_relatorio_erro"])
 
-    if st.session_state.get("pdf_relatorio_bytes"):
-        st.download_button(
-            "⬇️ Baixar PDF gerado",
-            data=st.session_state["pdf_relatorio_bytes"],
-            file_name=st.session_state.get("pdf_relatorio_nome", "relatorio_qa.pdf"),
-            mime="application/pdf",
-        )
-
 
 def _montar_resumo_filtros_ativos() -> list[str]:
     """
@@ -908,6 +1002,7 @@ def _montar_resumo_filtros_ativos() -> list[str]:
 
     for chave_estado, rotulo in (
         ("filtro_projeto", "Projeto"),
+        ("filtro_sprint", "Sprint"),
         ("filtro_tipo_teste", "Tipos de Teste"),
         ("filtro_status", "Status"),
     ):

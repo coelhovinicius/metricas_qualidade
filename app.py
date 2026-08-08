@@ -21,11 +21,13 @@ Para rodar:
 from __future__ import annotations
 
 import base64
+import traceback
 from pathlib import Path
 
 import streamlit as st
 
 from auth.auth_manager import AuthManager
+from core.logs_sistema import TIPO_ERRO, registrar_log
 from ui.components import action_button, finish_action, loading_overlay
 from ui.pages.admin_page import render_admin_page, usuario_e_admin
 from ui.pages.dashboard_page import render_dashboard_page
@@ -67,7 +69,7 @@ def _renderizar_sidebar_navegacao(auth_manager: AuthManager) -> None:
 
     paginas = {"upload": "📥 Importar Dados", "dashboard": "📊 Indicadores"}
     if usuario_e_admin(auth_manager.current_username()):
-        paginas["admin"] = "🔐 Solicitações de Acesso"
+        paginas["admin"] = "⚙️ Administração"
 
     pagina_atual = st.session_state.get("pagina_atual", "upload")
     if pagina_atual not in paginas:
@@ -157,12 +159,37 @@ def main() -> None:
     _renderizar_botao_nova_analise()
 
     pagina_atual = st.session_state["pagina_atual"]
-    if pagina_atual == "upload":
-        render_upload_page()
-    elif pagina_atual == "admin" and usuario_e_admin(auth_manager.current_username()):
-        render_admin_page()
-    else:
-        render_dashboard_page()
+    try:
+        if pagina_atual == "upload":
+            render_upload_page()
+        elif pagina_atual == "admin" and usuario_e_admin(auth_manager.current_username()):
+            render_admin_page()
+        else:
+            render_dashboard_page()
+    except Exception as exc:
+        # Rede de segurança: qualquer exceção não tratada que escape de uma
+        # página vai parar aqui, em vez de estourar a tela de erro padrão do
+        # Streamlit (que expõe detalhe técnico pro usuário e não fica
+        # guardada em lugar nenhum pra consulta depois). `st.rerun()`/
+        # `st.stop()`, usados em várias páginas, NÃO caem neste `except` -
+        # as duas levantam uma exceção de controle (`RerunException`/
+        # `StopException`) que herda de `BaseException`, não de `Exception`,
+        # de propósito (é assim que o próprio Streamlit é feito) - por isso
+        # capturar só `Exception` aqui é seguro e não quebra navegação nem
+        # os fluxos normais de "recarregar a página" espalhados pelo app.
+        registrar_log(
+            TIPO_ERRO, auth_manager.current_username(),
+            f"Erro não tratado na página '{pagina_atual}': {exc}",
+            detalhes=traceback.format_exc(),
+        )
+        st.error(
+            "😕 Ocorreu um erro inesperado nesta página. O detalhe técnico foi registrado "
+            "no log do sistema" + (
+                " (Administração → Logs do Sistema → Erros Técnicos)."
+                if usuario_e_admin(auth_manager.current_username())
+                else " para o administrador consultar."
+            )
+        )
 
     # O botão "Sair" é renderizado por último, depois de qualquer filtro que a
     # página atual (ex.: dashboard) tenha adicionado à sidebar.

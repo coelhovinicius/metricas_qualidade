@@ -59,6 +59,8 @@ import streamlit_authenticator as stauth
 import yaml
 from yaml.loader import SafeLoader
 
+from core.logs_sistema import TIPO_LOGIN, registrar_log
+
 USERS_YAML_PATH = Path(__file__).parent / "users.yaml"
 
 
@@ -159,6 +161,7 @@ class AuthManager:
             # secrets.toml configurado - comportamento normal em dev local.
             pass
         return chave_local
+
     def render_login_form(self) -> tuple[Optional[str], Optional[bool], Optional[str]]:
         """
         Renderiza o formulário de login e retorna (nome, status, username).
@@ -188,6 +191,16 @@ class AuthManager:
         )
 
         if authentication_status is True:
+            # Log de acesso (ver `core/logs_sistema.py`) - cobre tanto um
+            # login de verdade pelo formulário quanto uma reautenticação
+            # silenciosa via cookie (ex.: usuário abriu uma aba/sessão nova
+            # com o cookie de sessão ainda válido) - as duas situações caem
+            # neste mesmo "authentication_status is True", e a lib não expõe
+            # nenhuma forma de diferenciar uma da outra por aqui. Precisa ser
+            # feito ANTES do `st.rerun()' logo abaixo: depois dele, a função
+            # nunca chega a devolver o controle pra quem chamou.
+            registrar_log(TIPO_LOGIN, username, "Login bem-sucedido")
+
             # A reautenticação silenciosa via cookie (sem o usuário ter
             # clicado em "Entrar" agora - é o caso de um F5 ou de reabrir a
             # aba) depende de um componente assíncrono (o gerenciador de
@@ -223,6 +236,12 @@ class AuthManager:
             # pausa e sem ela o cookie realmente não era salvo.
             time.sleep(0.4)
             st.rerun()
+        elif authentication_status is False:
+            # Log de acesso (ver `core/logs_sistema.py`) - usuário/senha
+            # incorretos. `username` aqui é o valor digitado no campo
+            # Usuário mesmo quando ele não existe de verdade nas credenciais
+            # - útil pra ver, no log, o que a pessoa tentou digitar.
+            registrar_log(TIPO_LOGIN, username, "Falha de login (usuário ou senha incorretos)")
 
         return name, authentication_status, username
 
@@ -361,59 +380,8 @@ class AuthManager:
         )
 
     def logout(self) -> None:
-        """
-        Encerra a sessão do usuário, limpa o estado interno e anula o cookie persistente.
-        
-        POR QUE: A biblioteca impõe limites de renderização, mascarando a chamada ao
-        `st.button` e rejeitando o parâmetro de layout `use_container_width`. A solução
-        adota inversão de controle: nós construímos a arquitetura de layout nativa via
-        Flexbox e `st.button`, e injetamos a lógica de expurgo (delete) diretamente no
-        módulo interno (cookie_manager) da instância.
-        """
-        user = self.current_user_name() or self.current_username()
-
-        st.markdown(
-            """
-            <style>
-                /* Força eixo de renderização Vertical (Flex) no container da Sidebar. */
-                [data-testid="stSidebarUserContent"] {
-                    display: flex;
-                    flex-direction: column;
-                    min-height: 100%;
-                }
-                /* Desloca a div com a respectiva classe para a base absoluta (rodapé). */
-                div[class*="st-key-sidebar_logout_box"] {
-                    margin-top: auto;
-                    padding-top: 1rem;
-                }
-            </style>
-            """,
-            unsafe_allow_html=True,
-        )
-
-        with st.sidebar:
-            with st.container(key="sidebar_logout_box"):
-                if user:
-                    st.caption(f"👤 Logado como **{user}**")
-                
-                # Renderização da API Nativa, garantindo ocupação lateral de 100%
-                if st.button("🚪 Sair", use_container_width=True, key="btn_logout"):
-                    
-                    # 1. Aciona rotina de remoção do cache local instanciado pela lib 
-                    try:
-                        nome_cookie = self._config["cookie"]["name"]
-                        self.authenticator.cookie_manager.delete(nome_cookie)
-                    except Exception:
-                        pass
-                        
-                    # 2. Desestabiliza variáveis de validação da state machine
-                    st.session_state['logout'] = True
-                    st.session_state['name'] = None
-                    st.session_state['username'] = None
-                    st.session_state['authentication_status'] = None
-                    
-                    # 3. Impulsiona refresh hard para reavaliar os blocos de restrição
-                    st.rerun()
+        """Encerra a sessão do usuário e limpa o cookie de persistência."""
+        self.authenticator.logout(button_name="Sair", location="sidebar")
 
     @staticmethod
     def is_authenticated() -> bool:
@@ -426,7 +394,3 @@ class AuthManager:
     @staticmethod
     def current_username() -> Optional[str]:
         return st.session_state.get("username")
-
-# Instanciação emulando Page Object Model (POM) export default new Page()
-# Importe esta instância diretamente nos módulos consumidores (ex: from auth_manager import auth_manager).
-auth_manager = AuthManager()

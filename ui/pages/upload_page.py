@@ -6,6 +6,7 @@ import time
 
 import streamlit as st
 
+from auth.auth_manager import AuthManager
 from core.azure_devops_client import (
     AzureDevOpsError,
     buscar_work_items_da_query,
@@ -16,6 +17,7 @@ from core.azure_devops_client import (
 )
 from core.column_mapper import MapeamentoColunas, detectar_mapeamento
 from core.data_loader import DataLoadError, ResultadoCarga, carregar_arquivo
+from core.logs_sistema import TIPO_ERRO, registrar_log
 from ui.components import action_button, finish_action, loading_overlay, render_header
 from utils.session import resetar_dados_importados, resetar_selecao_azure_devops
 
@@ -36,6 +38,8 @@ CAMPOS_MAPEAVEIS = [
     ("caso_teste", "Caso de Teste / ID"),
     ("severidade", "Severidade / Prioridade"),
     ("coluna_board", "Coluna do Board (Kanban)"),
+    ("sprint", "Sprint"),
+    ("prioridade_board", "Prioridade (posição no board) - Stack Rank/Backlog Priority"),
 ]
 
 CHAVE_CAMPOS_PERSONALIZADOS = "campos_personalizados_temp"
@@ -125,6 +129,10 @@ def _renderizar_importacao_manual() -> None:
                     time.sleep(0.3)
                 except DataLoadError as erro:
                     st.session_state["erro_carga"] = str(erro)
+                    registrar_log(
+                        TIPO_ERRO, AuthManager.current_username(),
+                        f"Falha ao processar arquivo '{arquivo_enviado.name}': {erro}",
+                    )
                 else:
                     st.session_state["erro_carga"] = None
             finish_action("btn_processar_arquivo")
@@ -138,40 +146,55 @@ def _renderizar_importacao_azure_devops() -> None:
         "Paths, depois selecione uma query já existente para trazer os dados."
     )
 
-    # Mesmo cuidado do `origem_importacao` acima: o campo de PAT também é um
-    # widget, e o Streamlit esquece o valor de um widget que não é renderizado
-    # por pelo menos uma execução do script (ex.: o usuário foi pra outra
-    # página do menu). Sem isso, o usuário seria obrigado a colar o PAT de
-    # novo toda vez que voltasse à tela de importação depois de navegar por
-    # outro menu - mesmo o PAT continua só em memória desta sessão do
-    # navegador (nunca em disco), exatamente como já era.
-    st.text_input(
-        "Seu Personal Access Token (PAT) do Azure DevOps",
-        type="password",
-        value=st.session_state.get("azure_pat_persistido", ""),
-        key="azure_pat",
-        placeholder="Cole aqui o seu PAT pessoal",
-        help=(
-            "Cada usuário usa o próprio PAT — ele nunca é salvo em disco nem nos Secrets "
-            "do Streamlit, fica só na memória desta sessão do navegador e some ao sair. "
-            "Gere um token em dev.azure.com → foto de perfil → Personal Access Tokens → "
-            "New Token, com escopo 'Work Items (Read)'."
-        ),
-    )
+    # Layout em duas colunas fixas, preenchidas em zigue-zague conforme cada
+    # passo libera o próximo (linha 1 → PAT / Organização, linha 2 → Projeto
+    # / Area Path(s), linha 3 → Query / Baixar relatório) - em vez de tudo
+    # empilhado numa coluna só, esticando a tela toda na horizontal. As duas
+    # colunas são criadas uma vez só aqui e reaproveitadas nos blocos `with`
+    # abaixo (mesma técnica já usada no menu Administração) - cada passo só
+    # aparece de verdade quando o anterior já foi cumprido; antes disso, o
+    # lado correspondente mostra só uma dica do que falta.
+    col_esquerda, col_direita = st.columns(2, gap="large")
+
+    # ---------------------------------------------------- Linha 1, coluna esquerda: PAT
+    with col_esquerda:
+        # Mesmo cuidado do `origem_importacao` acima: o campo de PAT também é
+        # um widget, e o Streamlit esquece o valor de um widget que não é
+        # renderizado por pelo menos uma execução do script (ex.: o usuário
+        # foi pra outra página do menu). Sem isso, o usuário seria obrigado a
+        # colar o PAT de novo toda vez que voltasse à tela de importação
+        # depois de navegar por outro menu - mesmo o PAT continua só em
+        # memória desta sessão do navegador (nunca em disco), exatamente
+        # como já era.
+        st.text_input(
+            "Seu Personal Access Token (PAT) do Azure DevOps",
+            type="password",
+            value=st.session_state.get("azure_pat_persistido", ""),
+            key="azure_pat",
+            placeholder="Cole aqui o seu PAT pessoal",
+            help=(
+                "Cada usuário usa o próprio PAT — ele nunca é salvo em disco nem nos Secrets "
+                "do Streamlit, fica só na memória desta sessão do navegador e some ao sair. "
+                "Gere um token em dev.azure.com → foto de perfil → Personal Access Tokens → "
+                "New Token, com escopo 'Work Items (Read)'."
+            ),
+        )
     pat = st.session_state.get("azure_pat", "")
     st.session_state["azure_pat_persistido"] = pat
 
-    # ---------------------------------------------------- Passo 1: Organização (obrigatório)
-    col_org, col_botao_org = st.columns([3, 1])
-    with col_org:
+    if not pat:
+        with col_direita:
+            st.caption("👈 Informe o seu PAT ao lado para liberar a Organização.")
+        return
+
+    # ---------------------------------------------------- Linha 1, coluna direita: Organização
+    with col_direita:
         organizacao_escolhida = st.selectbox(
             "Organização",
             options=ORGANIZACOES_SUGERIDAS,
             key="azure_organizacao_input",
             help="Nada é carregado da API até você clicar em \"Carregar organização\".",
         )
-    with col_botao_org:
-        st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
         # `key=` no container vira a classe CSS `st-key-ado_btn_carregar_organizacao`
         # (recurso nativo do Streamlit) - é o que ui/theme.py usa pra pintar só
         # este botão de azul, sem afetar os outros botões da página.
@@ -180,10 +203,7 @@ def _renderizar_importacao_azure_devops() -> None:
                 "Carregar organização",
                 key="btn_carregar_organizacao_azure",
                 use_container_width=True,
-                disabled=not pat,
             )
-    if not pat:
-        st.caption("Informe o seu PAT acima para poder carregar a organização.")
 
     if carregar_org:
         with loading_overlay("Carregando projetos da organização, aguarde..."):
@@ -197,6 +217,10 @@ def _renderizar_importacao_azure_devops() -> None:
             except AzureDevOpsError as erro:
                 st.session_state["azure_organizacao_carregada"] = None
                 st.session_state["erro_carga"] = str(erro)
+                registrar_log(
+                    TIPO_ERRO, AuthManager.current_username(),
+                    f"Falha ao carregar organização '{organizacao_escolhida}' do Azure DevOps: {erro}",
+                )
         st.rerun()
 
     organizacao_carregada = st.session_state.get("azure_organizacao_carregada")
@@ -207,7 +231,7 @@ def _renderizar_importacao_azure_devops() -> None:
         # estado) - recarrega automaticamente pra não obrigar o usuário a
         # clicar em "Carregar organização" de novo só porque foi em outro menu.
         ultima_organizacao = st.session_state.get("azure_ultima_organizacao_usada")
-        if pat and ultima_organizacao:
+        if ultima_organizacao:
             with loading_overlay("Restaurando organização usada anteriormente, aguarde..."):
                 try:
                     projetos = listar_projetos(ultima_organizacao, pat)
@@ -218,7 +242,7 @@ def _renderizar_importacao_azure_devops() -> None:
             st.rerun()
         return
 
-    # ---------------------------------------------------- Passo 2: Projeto (obrigatório)
+    # ---------------------------------------------------- Linha 2, coluna esquerda: Projeto
     projetos_disponiveis = st.session_state.get("azure_projetos_disponiveis", [])
     opcoes_projeto = ["---"] + [projeto.nome for projeto in projetos_disponiveis]
 
@@ -256,12 +280,13 @@ def _renderizar_importacao_azure_devops() -> None:
 
     indice_projeto = opcoes_projeto.index(projeto_atual) if projeto_atual in opcoes_projeto else 0
 
-    projeto_escolhido = st.selectbox(
-        "Projeto",
-        options=opcoes_projeto,
-        index=indice_projeto,
-        key="azure_projeto_input",
-    )
+    with col_esquerda:
+        projeto_escolhido = st.selectbox(
+            "Projeto",
+            options=opcoes_projeto,
+            index=indice_projeto,
+            key="azure_projeto_input",
+        )
 
     if projeto_escolhido != "---" and projeto_escolhido != projeto_atual:
         # Escolher um projeto novo já dispara sozinho o carregamento do
@@ -280,6 +305,10 @@ def _renderizar_importacao_azure_devops() -> None:
                 st.session_state["erro_carga"] = None
             except AzureDevOpsError as erro:
                 st.session_state["erro_carga"] = str(erro)
+                registrar_log(
+                    TIPO_ERRO, AuthManager.current_username(),
+                    f"Falha ao carregar o projeto '{projeto_escolhido}' do Azure DevOps: {erro}",
+                )
         st.rerun()
     elif projeto_escolhido == "---" and projeto_atual is not None:
         resetar_selecao_azure_devops(manter_organizacao=True)
@@ -288,9 +317,11 @@ def _renderizar_importacao_azure_devops() -> None:
 
     projeto_selecionado = st.session_state.get("azure_projeto_selecionado")
     if not projeto_selecionado:
+        with col_direita:
+            st.caption("👈 Escolha um Projeto ao lado para liberar Area Path(s).")
         return
 
-    # ------------------------------------------- Passo 3: Area Path(s) (opcional, múltipla escolha)
+    # ------------------------------------------- Linha 2, coluna direita: Area Path(s) (opcional)
     area_paths_disponiveis = st.session_state.get("azure_area_paths_disponiveis", [])
     area_paths_atuais = [
         area_path
@@ -298,30 +329,31 @@ def _renderizar_importacao_azure_devops() -> None:
         if area_path in area_paths_disponiveis
     ]
 
-    area_paths_escolhidos = st.multiselect(
-        "Area Path(s) do Board no Projeto (opcional)",
-        options=area_paths_disponiveis,
-        default=area_paths_atuais,
-        # A chave inclui o projeto atual de propósito: o Streamlit, quando um
-        # widget já tinha valores selecionados, às vezes mantém esses valores
-        # na tela mesmo depois de trocar as opções (aqui, ao trocar de
-        # projeto) - forçar uma chave nova junto com a troca de projeto faz o
-        # Streamlit tratar como um widget realmente novo, evitando seleção
-        # "fantasma" do projeto anterior.
-        key=f"azure_area_path_input__{projeto_selecionado}",
-        help="Selecione um ou mais Area Paths para trazer work items de vários times/módulos de uma vez.",
-    )
-    st.caption(
-        "Campo opcional. Se você escolher um ou mais Area Paths aqui, o app filtra os work "
-        "items trazidos pela query para manter só os que estão dentro de algum deles (e dos "
-        "seus sub-caminhos). Se deixar em branco, nenhum filtro extra de Area Path é aplicado "
-        "— vale o que a própria query já retorna."
-    )
+    with col_direita:
+        area_paths_escolhidos = st.multiselect(
+            "Area Path(s) do Board no Projeto (opcional)",
+            options=area_paths_disponiveis,
+            default=area_paths_atuais,
+            # A chave inclui o projeto atual de propósito: o Streamlit, quando um
+            # widget já tinha valores selecionados, às vezes mantém esses valores
+            # na tela mesmo depois de trocar as opções (aqui, ao trocar de
+            # projeto) - forçar uma chave nova junto com a troca de projeto faz o
+            # Streamlit tratar como um widget realmente novo, evitando seleção
+            # "fantasma" do projeto anterior.
+            key=f"azure_area_path_input__{projeto_selecionado}",
+            help="Selecione um ou mais Area Paths para trazer work items de vários times/módulos de uma vez.",
+        )
+        st.caption(
+            "Campo opcional. Se você escolher um ou mais Area Paths aqui, o app filtra os work "
+            "items trazidos pela query para manter só os que estão dentro de algum deles (e dos "
+            "seus sub-caminhos). Se deixar em branco, nenhum filtro extra de Area Path é aplicado "
+            "— vale o que a própria query já retorna."
+        )
     st.session_state["azure_area_paths_selecionados"] = area_paths_escolhidos
     if area_paths_escolhidos:
         st.session_state["azure_ultimos_area_paths_usados"] = area_paths_escolhidos
 
-    # ---------------------------------------------- Passo 4: Query existente (obrigatório p/ buscar)
+    # ---------------------------------------------- Linha 3, coluna esquerda: Query existente
     queries_disponiveis = st.session_state.get("azure_queries_disponiveis", [])
     mapa_queries = {item.caminho: item.id for item in queries_disponiveis}
     opcoes_query = ["---"] + list(mapa_queries.keys())
@@ -339,35 +371,36 @@ def _renderizar_importacao_azure_devops() -> None:
     ) if query_id_atual else "---"
     indice_query = opcoes_query.index(caminho_atual) if caminho_atual in opcoes_query else 0
 
-    col_query, col_atualizar, col_link = st.columns([3, 1, 1])
-    with col_query:
+    with col_esquerda:
         query_escolhida_caminho = st.selectbox(
             "Query salva no Azure DevOps",
             options=opcoes_query,
             index=indice_query,
             key=f"azure_query_input__{projeto_selecionado}",  # mesmo motivo do Area Path acima
         )
-    with col_atualizar:
-        st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
-        atualizar_queries = st.button(
-            "🔄 Atualizar lista",
-            key="btn_atualizar_queries_azure",
-            use_container_width=True,
-            help="Busca a lista de queries de novo — use depois de criar uma query nova no Azure DevOps.",
-        )
-    with col_link:
-        st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
-        link_criacao = montar_link_criacao_query(organizacao_carregada, projeto_selecionado)
-        st.link_button(
-            "Criar nova query ↗",
-            link_criacao,
-            use_container_width=True,
-            help=(
-                "Abre a tela nativa do Azure DevOps para você montar uma query nova "
-                f"em {organizacao_carregada}/{projeto_selecionado}. Depois de salvar lá, "
-                "clique em 'Atualizar lista' ao lado para recarregar."
-            ),
-        )
+        # Botões um do lado do outro, numa sub-divisão só dentro desta
+        # coluna (coluna já é metade da tela - 3 colunas lado a lado aqui
+        # ficaria apertado demais).
+        col_atualizar, col_link = st.columns(2)
+        with col_atualizar:
+            atualizar_queries = st.button(
+                "🔄 Atualizar lista",
+                key="btn_atualizar_queries_azure",
+                use_container_width=True,
+                help="Busca a lista de queries de novo — use depois de criar uma query nova no Azure DevOps.",
+            )
+        with col_link:
+            link_criacao = montar_link_criacao_query(organizacao_carregada, projeto_selecionado)
+            st.link_button(
+                "Criar nova query ↗",
+                link_criacao,
+                use_container_width=True,
+                help=(
+                    "Abre a tela nativa do Azure DevOps para você montar uma query nova "
+                    f"em {organizacao_carregada}/{projeto_selecionado}. Depois de salvar lá, "
+                    "clique em 'Atualizar lista' ao lado para recarregar."
+                ),
+            )
 
     if atualizar_queries:
         with loading_overlay("Atualizando lista de queries, aguarde..."):
@@ -378,6 +411,10 @@ def _renderizar_importacao_azure_devops() -> None:
                 st.session_state["erro_carga"] = None
             except AzureDevOpsError as erro:
                 st.session_state["erro_carga"] = str(erro)
+                registrar_log(
+                    TIPO_ERRO, AuthManager.current_username(),
+                    f"Falha ao atualizar a lista de queries do projeto '{projeto_selecionado}': {erro}",
+                )
         st.rerun()
 
     st.session_state["azure_query_selecionada_id"] = (
@@ -387,16 +424,24 @@ def _renderizar_importacao_azure_devops() -> None:
         st.session_state["azure_ultima_query_usada"] = query_escolhida_caminho
 
     if not queries_disponiveis:
-        st.info(
-            "Nenhuma query encontrada neste projeto ainda. Confira se o projeto certo está "
-            "selecionado acima e se a query está salva em **Shared Queries** (ou em **My "
-            "Queries** do mesmo usuário dono do PAT) — depois use **Atualizar lista**. Ou "
-            "use o botão **Criar nova query** para criar uma diretamente no Azure DevOps."
-        )
+        with col_esquerda:
+            st.info(
+                "Nenhuma query encontrada neste projeto ainda. Confira se o projeto certo está "
+                "selecionado acima e se a query está salva em **Shared Queries** (ou em **My "
+                "Queries** do mesmo usuário dono do PAT) — depois use **Atualizar lista**. Ou "
+                "use o botão **Criar nova query** para criar uma diretamente no Azure DevOps."
+            )
 
+    # ------------------------------------- Abaixo das duas colunas: Baixar relatório
+    # Fora do zigue-zague de propósito (não fica "grudado" numa das duas
+    # colunas): como a coluna direita (Area Path(s), com o campo + legenda)
+    # costuma ficar mais alta que a esquerda nessa altura do fluxo, colocar
+    # este botão dentro de uma das colunas fazia ele nascer desalinhado,
+    # meio solto no meio da tela - de largura total, abaixo de tudo, ele
+    # sempre fica no mesmo lugar, sem depender da altura de nenhuma coluna.
     query_id = st.session_state.get("azure_query_selecionada_id")
     if not query_id:
-        st.info("Selecione uma query salva acima para habilitar o download.")
+        st.caption("👆 Selecione uma query salva acima para liberar o download.")
         return
 
     processar = action_button(
@@ -451,6 +496,10 @@ def _renderizar_importacao_azure_devops() -> None:
                 time.sleep(0.3)
             except AzureDevOpsError as erro:
                 st.session_state["erro_carga"] = str(erro)
+                registrar_log(
+                    TIPO_ERRO, AuthManager.current_username(),
+                    f"Falha ao baixar relatório do Azure DevOps (projeto '{projeto_selecionado}'): {erro}",
+                )
             else:
                 st.session_state["erro_carga"] = None
         finish_action("btn_baixar_azure_devops")
