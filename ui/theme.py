@@ -745,6 +745,160 @@ def injetar_css_global() -> None:
             border: 1px solid #ecebe6;
         }}
 
+        /* ---------- Página "Sobre o App": diagramas de fluxo em HTML/CSS ---------- */
+        /* Feito em HTML/CSS puro (sem Graphviz/Mermaid) de propósito: zero
+           dependência nova pra instalar (nem no ambiente do app, nem no
+           computador de quem for rodar localmente), funciona 100% offline, e
+           herda a mesma paleta/fonte do resto do app em vez de ficar com a
+           cara de um diagrama genérico. Ver `ui/pages/sobre_page.py`. */
+        .sobre-fluxo-passo {{
+            display: flex;
+            align-items: flex-start;
+            gap: 14px;
+            background-color: #FFFFFF;
+            border: 1px solid #ecebe6;
+            border-radius: 12px;
+            padding: 14px 18px;
+            margin-bottom: 4px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+        }}
+        .sobre-fluxo-passo.sobre-fluxo-decisao {{
+            background-color: #FFF8F5;
+            border-color: {PRIMARY_COLOR}55;
+            border-style: dashed;
+        }}
+        .sobre-fluxo-numero {{
+            flex-shrink: 0;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            background-color: {PRIMARY_COLOR};
+            color: #FFFFFF;
+            font-weight: 700;
+            font-size: 0.85rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }}
+        .sobre-fluxo-decisao .sobre-fluxo-numero {{
+            background-color: #6B6558;
+        }}
+        .sobre-fluxo-texto {{
+            font-size: 0.9rem;
+            line-height: 1.45;
+            color: {TEXT_COLOR};
+        }}
+        .sobre-fluxo-texto strong {{
+            display: block;
+            margin-bottom: 2px;
+            font-size: 0.95rem;
+        }}
+        .sobre-fluxo-seta {{
+            text-align: center;
+            color: #C9C4B8;
+            font-size: 1.3rem;
+            line-height: 1.1;
+            margin: 2px 0 6px 0;
+        }}
+        .sobre-fluxo-seta small {{
+            display: block;
+            font-size: 0.68rem;
+            color: #9B9B9B;
+            font-weight: 400;
+        }}
+        .sobre-fluxo-bifurcacao {{
+            display: flex;
+            gap: 16px;
+            margin-bottom: 4px;
+            align-items: stretch;
+        }}
+        .sobre-fluxo-ramo {{
+            flex: 1;
+            min-width: 0;
+            border: 1.5px dashed #ddd8cb;
+            border-radius: 14px;
+            padding: 14px;
+            background-color: #FAFAF8;
+        }}
+        .sobre-fluxo-ramo-titulo {{
+            font-weight: 700;
+            font-size: 0.9rem;
+            margin-bottom: 10px;
+            color: {TEXT_COLOR};
+        }}
+        .sobre-fluxo-ramo .sobre-fluxo-passo {{
+            padding: 9px 12px;
+            margin-bottom: 6px;
+        }}
+        .sobre-fluxo-ramo .sobre-fluxo-numero {{
+            width: 22px;
+            height: 22px;
+            font-size: 0.72rem;
+        }}
+        .sobre-fluxo-ramo .sobre-fluxo-texto {{
+            font-size: 0.82rem;
+        }}
+        .sobre-callout {{
+            background-color: #FFF4E5;
+            border: 1px solid #F0C989;
+            border-radius: 12px;
+            padding: 12px 16px;
+            font-size: 0.85rem;
+            line-height: 1.5;
+            color: {TEXT_COLOR};
+            margin: 10px 0;
+        }}
+        .sobre-catalogo-categoria {{
+            font-weight: 700;
+            font-size: 1rem;
+            margin: 22px 0 10px 0;
+            padding-bottom: 6px;
+            border-bottom: 2px solid {PRIMARY_COLOR}33;
+        }}
+        .sobre-catalogo-grade {{
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+            gap: 12px;
+            margin-bottom: 6px;
+        }}
+        .sobre-catalogo-card {{
+            border: 1px solid #ecebe6;
+            border-radius: 12px;
+            padding: 14px 16px;
+            background-color: #FFFFFF;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+        }}
+        .sobre-catalogo-card-titulo {{
+            font-weight: 600;
+            font-size: 0.88rem;
+            margin-bottom: 4px;
+            color: {TEXT_COLOR};
+        }}
+        .sobre-catalogo-card-desc {{
+            font-size: 0.78rem;
+            color: #6b6b6b;
+            line-height: 1.4;
+        }}
+        .sobre-estado-badges {{
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin: 10px 0 16px 0;
+        }}
+        .sobre-estado-badge {{
+            padding: 6px 16px;
+            border-radius: 999px;
+            font-weight: 600;
+            font-size: 0.82rem;
+        }}
+        .sobre-estado-pendente {{ background-color: #FFF4E5; color: #B26A00; }}
+        .sobre-estado-criada {{ background-color: #E6F4EA; color: #1E7B34; }}
+        .sobre-estado-rejeitada {{ background-color: #FDECEA; color: #C62828; }}
+        .sobre-estado-revogada {{ background-color: #F1F1F1; color: #555555; }}
+        @media (max-width: 700px) {{
+            .sobre-fluxo-bifurcacao {{ flex-direction: column; }}
+        }}
+
         /* ==========================================================================
            Responsividade: telas muito grandes (evita ficar "pequeno e esticado")
            e telas muito pequenas/mobile (evita títulos grandes demais e má leitura).

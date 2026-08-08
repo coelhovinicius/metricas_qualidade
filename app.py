@@ -32,6 +32,7 @@ from ui.components import action_button, finish_action, loading_overlay, rolar_p
 from ui.pages.admin_page import render_admin_page, usuario_e_admin
 from ui.pages.dashboard_page import render_dashboard_page
 from ui.pages.login_page import render_login_page
+from ui.pages.sobre_page import render_sobre_page
 from ui.pages.upload_page import render_upload_page
 from ui.theme import injetar_css_global
 from utils.session import inicializar_sessao, resetar_para_nova_analise
@@ -70,6 +71,12 @@ def _renderizar_sidebar_navegacao(auth_manager: AuthManager) -> None:
     paginas = {"upload": "📥 Importar Dados", "dashboard": "📊 Indicadores"}
     if usuario_e_admin(auth_manager.current_username()):
         paginas["admin"] = "⚙️ Administração"
+    # Visível pra QUALQUER pessoa logada (não só o admin) - sempre por
+    # último no menu, depois das páginas de trabalho - e de propósito FORA
+    # do "if usuario_e_admin" acima: o objetivo dessa página é ajudar
+    # qualquer usuário a entender o app inteiro, inclusive o que existe do
+    # lado da Administração, mesmo sem ter acesso a ela.
+    paginas["sobre"] = "ℹ️ Sobre o App"
 
     pagina_atual = st.session_state.get("pagina_atual", "upload")
     if pagina_atual not in paginas:
@@ -112,7 +119,7 @@ def _rolar_para_topo_se_mudou_de_tela(identificador_tela: str) -> None:
     cobre TODAS as transições de tela do app, não só o menu lateral:
         - login <-> app autenticado (entrar OU sair/"Sair");
         - trocar de página no menu lateral (Importar Dados/Indicadores/
-          Administração).
+          Administração/Sobre o App).
     NÃO dispara em reruns dentro da MESMA tela (ex.: mudar um filtro no
     dashboard, marcar uma coluna no construtor de gráfico, errar a senha e
     tentar de novo na tela de login) - só compara a tela atual com a última
@@ -197,6 +204,8 @@ def main() -> None:
             render_upload_page()
         elif pagina_atual == "admin" and usuario_e_admin(auth_manager.current_username()):
             render_admin_page()
+        elif pagina_atual == "sobre":
+            render_sobre_page()
         else:
             render_dashboard_page()
     except Exception as exc:
