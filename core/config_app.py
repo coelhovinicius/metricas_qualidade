@@ -49,6 +49,17 @@ CHAVE_GUIA_PDF_BASE64 = "guia_usuario_pdf_base64"
 # do guia ainda não gerada" sem precisar reabrir o PDF inteiro pra conferir.
 CHAVE_GUIA_PDF_HASH = "guia_usuario_pdf_hash"
 
+# "Código de acesso" que libera, dentro de "Sobre o App", o conteúdo que
+# descreve os fluxos exclusivos de Administração (a trilha "quem administra"
+# do fluxograma, e a seção "Administração") para quem NÃO é o admin - ver
+# `ui/pages/sobre_page.py::_usuario_tem_visao_admin`. Por padrão vazio/não
+# configurado (ninguém além do admin enxerga esse conteúdo); o admin define
+# um valor em Administração e repassa, por fora do app, só para quem quiser
+# dar essa visibilidade extra. Não é uma senha de autenticação de verdade -
+# é só um "seletor" de conteúdo informativo, guardado como configuração
+# comum (mesma tabela genérica das demais chaves deste módulo).
+CHAVE_CODIGO_VISAO_ADMIN_SOBRE_APP = "sobre_app_codigo_visao_admin"
+
 
 def chave_pasta_raiz_google_drive(nome_usuario: str) -> str:
     """

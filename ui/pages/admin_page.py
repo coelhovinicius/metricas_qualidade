@@ -9,6 +9,7 @@ import streamlit as st
 
 from auth.auth_manager import AuthManager
 from core.config_app import (
+    CHAVE_CODIGO_VISAO_ADMIN_SOBRE_APP,
     CHAVE_GUIA_PDF_BASE64,
     CHAVE_GUIA_PDF_HASH,
     definir_configuracao,
@@ -78,6 +79,67 @@ def _email_protegido_de_revogacao(email: str) -> bool:
     return email.strip().lower() in protegidos
 
 
+def _renderizar_secao_acesso_conteudo_admin_sobre_app() -> None:
+    """
+    Controla o "código de acesso" que libera, dentro da página "Sobre o App",
+    o conteúdo que descreve os fluxos exclusivos de Administração (a trilha
+    "quem administra" do fluxograma completo, e a seção "Administração") -
+    ver `ui/pages/sobre_page.py::_usuario_tem_visao_admin`. Por padrão, esse
+    conteúdo fica escondido para qualquer pessoa que não seja o admin; só
+    quem digitar o código certo (repassado por você, por fora do app, pra
+    quem você quiser) consegue desbloquear, e só na própria sessão do
+    navegador dela - o desbloqueio não fica "ligado" pra sempre nem afeta
+    outras pessoas.
+
+    De propósito, NÃO é uma senha de autenticação de verdade (não tem
+    usuário associado, não expira, é a mesma pra quem quer que a pessoa
+    admin decida compartilhar) - é só um seletor de conteúdo informativo,
+    guardado como configuração comum no Turso (mesma tabela de
+    `core/config_app.py` usada pelo Guia do Usuário em PDF).
+    """
+    st.caption(
+        "Por padrão, a seção \"Administração\" e a trilha \"quem administra\" do fluxograma, "
+        "dentro de \"Sobre o App\", ficam escondidas para quem não é você. Defina um código "
+        "aqui e repasse (por fora do app, só para quem você quiser) - a pessoa digita esse "
+        "código na tela dela para desbloquear esse conteúdo."
+    )
+
+    try:
+        codigo_atual = obter_configuracao(CHAVE_CODIGO_VISAO_ADMIN_SOBRE_APP)
+    except TursoError as erro:
+        st.error(str(erro))
+        codigo_atual = None
+
+    if codigo_atual:
+        st.success(f"Código atual: `{codigo_atual}`")
+    else:
+        st.info("Nenhum código definido ainda - ninguém além de você enxerga esse conteúdo.")
+
+    novo_codigo = st.text_input(
+        "Novo código (deixe em branco e salve para desativar o desbloqueio para todo mundo)",
+        key="input_codigo_visao_admin_sobre_app",
+        placeholder="ex.: qa2026",
+    )
+    if action_button("💾 Salvar código", key="btn_salvar_codigo_visao_admin"):
+        with loading_overlay("Salvando, aguarde..."):
+            try:
+                definir_configuracao(CHAVE_CODIGO_VISAO_ADMIN_SOBRE_APP, novo_codigo.strip())
+            except TursoError as erro:
+                erro_salvar: Optional[TursoError] = erro
+            else:
+                erro_salvar = None
+                registrar_log(
+                    TIPO_PAINEL, AuthManager.current_username(),
+                    "Alterou o código de acesso ao conteúdo administrativo de \"Sobre o App\"",
+                )
+        finish_action("btn_salvar_codigo_visao_admin")
+        if erro_salvar:
+            st.error(str(erro_salvar))
+        else:
+            st.success("Código salvo.")
+            st.rerun()
+
+
 def render_admin_page() -> None:
     render_header(
         titulo="Administração",
@@ -98,6 +160,9 @@ def render_admin_page() -> None:
                 st.error(str(erro_teste))
             else:
                 st.success("Conexão com o banco de dados funcionando normalmente.")
+
+    with st.expander("🔒 Código de acesso ao conteúdo administrativo de \"Sobre o App\""):
+        _renderizar_secao_acesso_conteudo_admin_sobre_app()
 
     # Quatro áreas dentro do mesmo menu "Administração", em abas em vez de uma
     # embaixo da outra na mesma rolagem - "Solicitações de Acesso" (criação/

@@ -27,8 +27,14 @@ from typing import Optional
 
 import streamlit as st
 
-from core.config_app import CHAVE_GUIA_PDF_BASE64, obter_configuracao
+from auth.auth_manager import AuthManager
+from core.config_app import (
+    CHAVE_CODIGO_VISAO_ADMIN_SOBRE_APP,
+    CHAVE_GUIA_PDF_BASE64,
+    obter_configuracao,
+)
 from ui.components import render_header
+from ui.pages.admin_page import usuario_e_admin
 
 # ui/pages/sobre_page.py -> ui/pages -> ui -> raiz do projeto -> assets/
 _ASSETS_DIR = Path(__file__).resolve().parent.parent.parent / "assets"
@@ -64,6 +70,71 @@ def _obter_bytes_guia_pdf() -> Optional[bytes]:
     if _CAMINHO_GUIA_PDF.exists():
         return _CAMINHO_GUIA_PDF.read_bytes()
     return None
+
+
+_CHAVE_SESSAO_VISAO_ADMIN_DESBLOQUEADA = "sobre_app_visao_admin_desbloqueada"
+
+
+def _usuario_tem_visao_admin() -> bool:
+    """
+    True se o usuário logado deve ver o conteúdo administrativo desta página
+    (a trilha "quem administra" do fluxograma completo e a seção
+    "Administração" inteira) - ou porque ele É o admin, ou porque já
+    desbloqueou com o código certo nesta mesma sessão do navegador (ver
+    `_desbloquear_conteudo_admin`, e o código em si definido em
+    Administração → "Código de acesso ao conteúdo administrativo de 'Sobre
+    o App'"). Guardado em `st.session_state` (não no banco) de propósito: o
+    desbloqueio vale só para esta sessão de navegador específica, não fica
+    "ligado" pra sempre nem afeta outras pessoas.
+    """
+    if usuario_e_admin(AuthManager.current_username()):
+        return True
+    return bool(st.session_state.get(_CHAVE_SESSAO_VISAO_ADMIN_DESBLOQUEADA))
+
+
+def _desbloquear_conteudo_admin() -> None:
+    """
+    Campo + botão para quem não é admin digitar o código liberado pela
+    pessoa administradora e desbloquear, só nesta sessão do navegador, o
+    conteúdo administrativo desta página. Sem nenhum código configurado
+    ainda (`obter_configuracao` devolve vazio/None), nem mostra o campo -
+    não haveria nada para acertar.
+    """
+    try:
+        codigo_configurado = obter_configuracao(CHAVE_CODIGO_VISAO_ADMIN_SOBRE_APP)
+    except Exception:
+        codigo_configurado = None
+
+    if not codigo_configurado:
+        st.caption(
+            "🔒 Esta parte descreve as funcionalidades exclusivas de quem administra o app. "
+            "A pessoa administradora ainda não liberou um código de acesso para este "
+            "conteúdo."
+        )
+        return
+
+    st.caption(
+        "🔒 Esta parte descreve as funcionalidades exclusivas de quem administra o app. Se "
+        "você recebeu um código de acesso da pessoa administradora, digite abaixo para "
+        "desbloquear (vale só para esta sua sessão)."
+    )
+    col_codigo, col_botao = st.columns([3, 1])
+    with col_codigo:
+        codigo_digitado = st.text_input(
+            "Código de acesso", key="input_codigo_desbloqueio_admin",
+            label_visibility="collapsed", placeholder="Código de acesso",
+        )
+    with col_botao:
+        desbloquear = st.button(
+            "Desbloquear", key="btn_desbloquear_admin_sobre_app", use_container_width=True,
+        )
+    if desbloquear:
+        if codigo_digitado.strip() and codigo_digitado.strip() == codigo_configurado.strip():
+            st.session_state[_CHAVE_SESSAO_VISAO_ADMIN_DESBLOQUEADA] = True
+            st.rerun()
+        else:
+            st.error("Código incorreto.")
+
 
 # ---------------------------------------------------------------------------
 # Componentes de diagrama (blocos HTML/CSS reutilizáveis - ver docstring do
@@ -193,7 +264,7 @@ def _sec_visao_geral() -> None:
     )
 
 
-def _sec_fluxograma_completo() -> None:
+def _sec_fluxograma_completo(mostrar_trilha_admin: bool) -> None:
     """
     Fluxograma completo do app: diferente de `_sec_visao_geral` (só o
     caminho principal de quem importa/analisa dados), aqui aparecem as DUAS
@@ -205,14 +276,31 @@ def _sec_fluxograma_completo() -> None:
     de acesso, configurar a credencial do Google Drive) são pré-requisito
     para passos da trilha comum - o "fluxograma completo" pedido é reunir as
     duas coisas numa figura só, com essas dependências explícitas.
+
+    `mostrar_trilha_admin` (ver `_usuario_tem_visao_admin`) controla a
+    segregação de conteúdo por papel: quando False, a coluna da direita e os
+    avisos 🔗 (que descrevem COMO a administração resolve cada travamento,
+    incluindo onde no código/Secrets isso mora) viram uma versão resumida,
+    só avisando que aquele conteúdo existe e está disponível pra quem
+    desbloquear (ver "⚙️ Administração" mais abaixo na página).
     """
     st.markdown("### Fluxograma completo do app")
     st.caption(
         "As duas trilhas rodam em paralelo, não uma depois da outra - a coluna da direita "
         "(Administração) não tem uma 'ordem' fixa como a da esquerda, e fica disponível o tempo "
-        "todo pra quem loga como `admin`. Os avisos 🔗 abaixo mostram exatamente onde uma trilha "
-        "trava a outra."
+        "todo pra quem loga como `admin`."
     )
+    if mostrar_trilha_admin:
+        ramo_admin = ("⚙️ Trilha de quem administra (login admin)", [
+            ("A", "Configurar a conta de serviço do Google Drive", "Uma vez só, em Administração → Google Drive - ver aviso 🔗 abaixo."),
+            ("B", "Aprovar ou rejeitar solicitações de acesso", "Fila de \"Pendentes\" em Administração → Solicitações de Acesso."),
+            ("C", "Revogar acesso (ou reverter depois)", "Quando alguém sai, ou por engano."),
+            ("D", "Acompanhar os Logs do Sistema", "Acessos, erros técnicos, e ações feitas no próprio painel."),
+        ])
+    else:
+        ramo_admin = ("⚙️ Trilha de quem administra", [
+            ("🔒", "Conteúdo visível só para quem administra", "Peça um código de acesso à pessoa administradora para desbloquear (seção \"Administração\", mais abaixo)."),
+        ])
     _bifurcacao([
         ("🙋 Trilha de quem usa o app", [
             ("1", "Pedir acesso", "Só se ainda não tiver conta - formulário na tela de login."),
@@ -222,31 +310,35 @@ def _sec_fluxograma_completo() -> None:
             ("5", "Explorar o Painel de Indicadores", "Filtros + mais de 20 gráficos + gráfico personalizado."),
             ("✓", "Gerar PDF do Relatório", "Opcional, a qualquer momento a partir do painel."),
         ]),
-        ("⚙️ Trilha de quem administra (login admin)", [
-            ("A", "Configurar a conta de serviço do Google Drive", "Uma vez só, em Administração → Google Drive - ver aviso 🔗 abaixo."),
-            ("B", "Aprovar ou rejeitar solicitações de acesso", "Fila de \"Pendentes\" em Administração → Solicitações de Acesso."),
-            ("C", "Revogar acesso (ou reverter depois)", "Quando alguém sai, ou por engano."),
-            ("D", "Acompanhar os Logs do Sistema", "Acessos, erros técnicos, e ações feitas no próprio painel."),
-        ]),
+        ramo_admin,
     ])
     st.markdown("<br>", unsafe_allow_html=True)
-    _callout(
-        "🔗 <strong>Login trava em \"B\".</strong> A pessoa só consegue fazer login (passo 2 da "
-        "trilha da esquerda) depois que o admin marca a solicitação como \"Criada\" - e cria de "
-        "verdade o usuário/senha fora do app (nos Secrets do Streamlit ou em <code>auth/users.yaml</code>)."
-    )
-    _callout(
-        "🔗 <strong>\"Buscar arquivo no Google Drive\" trava em \"A\".</strong> Sem o admin "
-        "configurar a credencial da conta de serviço (passo A), essa opção de importação (passo 3) "
-        "mostra um aviso e não deixa navegar - os outros dois caminhos (Enviar arquivo / Azure "
-        "DevOps) funcionam independente disso. Depois que a credencial existe, cada pessoa "
-        "configura a PRÓPRIA pasta sozinha (dentro do passo 3), sem precisar do admin de novo."
-    )
-    _callout(
-        "Os passos \"C\" e \"D\" da direita não travam nada da trilha da esquerda - são só "
-        "manutenção contínua, disponíveis o tempo todo, sem uma ordem obrigatória entre si nem em "
-        "relação ao que a pessoa comum está fazendo."
-    )
+    if mostrar_trilha_admin:
+        _callout(
+            "🔗 <strong>Login trava em \"B\".</strong> A pessoa só consegue fazer login (passo 2 da "
+            "trilha da esquerda) depois que o admin marca a solicitação como \"Criada\" - e cria de "
+            "verdade o usuário/senha fora do app (nos Secrets do Streamlit ou em <code>auth/users.yaml</code>)."
+        )
+        _callout(
+            "🔗 <strong>\"Buscar arquivo no Google Drive\" trava em \"A\".</strong> Sem o admin "
+            "configurar a credencial da conta de serviço (passo A), essa opção de importação (passo 3) "
+            "mostra um aviso e não deixa navegar - os outros dois caminhos (Enviar arquivo / Azure "
+            "DevOps) funcionam independente disso. Depois que a credencial existe, cada pessoa "
+            "configura a PRÓPRIA pasta sozinha (dentro do passo 3), sem precisar do admin de novo."
+        )
+        _callout(
+            "Os passos \"C\" e \"D\" da direita não travam nada da trilha da esquerda - são só "
+            "manutenção contínua, disponíveis o tempo todo, sem uma ordem obrigatória entre si nem em "
+            "relação ao que a pessoa comum está fazendo."
+        )
+    else:
+        _callout(
+            "🔗 Alguns passos da trilha da esquerda dependem de uma ação prévia de quem administra "
+            "(ex.: login depende de aprovação de acesso; \"Buscar arquivo no Google Drive\" depende de "
+            "uma credencial configurada) - os detalhes de como a administração resolve cada um estão "
+            "disponíveis só para quem desbloquear o conteúdo administrativo (seção \"Administração\", "
+            "mais abaixo)."
+        )
 
 
 def _sec_guia_para_baixar() -> None:
@@ -532,10 +624,15 @@ def render_sobre_page() -> None:
         subtitulo="Como o app funciona, do login até o relatório em PDF.",
     )
 
+    # Calculado uma vez só por carregamento de página e reaproveitado nos
+    # dois pontos que segregam conteúdo por papel (fluxograma + seção
+    # "Administração", mais abaixo) - ver `_usuario_tem_visao_admin`.
+    visao_admin = _usuario_tem_visao_admin()
+
     _sec_visao_geral()
 
     st.divider()
-    _sec_fluxograma_completo()
+    _sec_fluxograma_completo(visao_admin)
 
     st.divider()
     st.markdown("### 📘 Guia Completo do Usuário")
@@ -557,8 +654,15 @@ def render_sobre_page() -> None:
     with st.expander("📊 O que cada gráfico do Painel de Indicadores mostra", expanded=False):
         _sec_catalogo_graficos()
 
-    with st.expander("⚙️ Administração (só para o admin)"):
-        _sec_administracao()
+    titulo_secao_admin = (
+        "🔓 Administração (desbloqueado)" if visao_admin
+        else "🔒 Administração (só para o admin, ou quem tiver o código de acesso)"
+    )
+    with st.expander(titulo_secao_admin):
+        if visao_admin:
+            _sec_administracao()
+        else:
+            _desbloquear_conteudo_admin()
 
     st.markdown("<br>", unsafe_allow_html=True)
     st.caption(
