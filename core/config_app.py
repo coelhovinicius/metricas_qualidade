@@ -60,6 +60,19 @@ CHAVE_GUIA_PDF_HASH = "guia_usuario_pdf_hash"
 # comum (mesma tabela genérica das demais chaves deste módulo).
 CHAVE_CODIGO_VISAO_ADMIN_SOBRE_APP = "sobre_app_codigo_visao_admin"
 
+# Guardam as duas imagens (PNG, em base64) do "Fluxograma completo do app"
+# mostrado em "Sobre o App" - ver `core/gerador_fluxograma.py` e o botão
+# "🔄 Gerar/Atualizar fluxograma agora" em Administração → "📘 Guia do
+# Usuário". Mesmo raciocínio de CHAVE_GUIA_PDF_BASE64 acima: gravar aqui (e
+# não só no arquivo em assets/) é o que faz a imagem sobreviver a
+# reinícios/redeploys no Streamlit Community Cloud, cujo disco é temporário.
+# Duas chaves de conteúdo (uma por versão - completa e pública) e duas de
+# hash (para o indicador "há alteração pendente", ver CHAVE_GUIA_PDF_HASH).
+CHAVE_FLUXOGRAMA_COMPLETO_BASE64 = "fluxograma_completo_base64"
+CHAVE_FLUXOGRAMA_COMPLETO_HASH = "fluxograma_completo_hash"
+CHAVE_FLUXOGRAMA_PUBLICO_BASE64 = "fluxograma_publico_base64"
+CHAVE_FLUXOGRAMA_PUBLICO_HASH = "fluxograma_publico_hash"
+
 
 def chave_pasta_raiz_google_drive(nome_usuario: str) -> str:
     """

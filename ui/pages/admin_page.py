@@ -10,6 +10,10 @@ import streamlit as st
 from auth.auth_manager import AuthManager
 from core.config_app import (
     CHAVE_CODIGO_VISAO_ADMIN_SOBRE_APP,
+    CHAVE_FLUXOGRAMA_COMPLETO_BASE64,
+    CHAVE_FLUXOGRAMA_COMPLETO_HASH,
+    CHAVE_FLUXOGRAMA_PUBLICO_BASE64,
+    CHAVE_FLUXOGRAMA_PUBLICO_HASH,
     CHAVE_GUIA_PDF_BASE64,
     CHAVE_GUIA_PDF_HASH,
     definir_configuracao,
@@ -17,6 +21,12 @@ from core.config_app import (
     obter_configuracao_com_data,
 )
 from core.fuso_horario import formatar_data_hora_brasil
+from core.gerador_fluxograma import (
+    gerar_bytes_completo as gerar_fluxograma_completo_bytes,
+    gerar_bytes_publico as gerar_fluxograma_publico_bytes,
+    hash_conteudo_completo as hash_fluxograma_completo,
+    hash_conteudo_publico as hash_fluxograma_publico,
+)
 from core.gerador_guia_pdf import gerar_pdf_bytes, hash_conteudo_atual
 from core.google_drive_client import GoogleDriveError, email_conta_servico
 from core.google_drive_client import testar_conexao as testar_conexao_drive
@@ -187,6 +197,8 @@ def render_admin_page() -> None:
 
     with aba_guia:
         _renderizar_secao_guia_pdf()
+        st.divider()
+        _renderizar_secao_fluxograma()
 
 
 def _renderizar_secao_solicitacoes() -> None:
@@ -820,4 +832,124 @@ def _renderizar_secao_guia_pdf() -> None:
                 "arrumado/igual ao que está no ar (ex.: caso o banco de dados algum dia seja "
                 "resetado, o repositório já tem a versão certa como reserva) - os usuários já "
                 "estão recebendo a versão certa mesmo sem você fazer esse passo."
+            )
+
+
+def _renderizar_secao_fluxograma() -> None:
+    """
+    Segundo bloco da mesma aba "📘 Guia do Usuário": recria as duas imagens
+    do "Fluxograma completo do app" (retângulos + setas, ver
+    `core/gerador_fluxograma.py`) direto pelo navegador - sem precisar de
+    terminal, VSCode, nem ter o Graphviz instalado na sua própria máquina
+    (só o ambiente do app precisa dele - já incluído em `requirements.txt`/
+    `packages.txt`). Mesmíssimo padrão de `_renderizar_secao_guia_pdf` acima
+    (grava no Turso para sobreviver a reinícios/redeploys, indicador de
+    "alteração pendente" por hash do conteúdo, um clique regenera tudo) -
+    aplicado às DUAS versões da imagem de uma vez só (a completa e a
+    trancada), já que as duas vêm do mesmo desenho de trilhas e mudam juntas
+    na prática.
+    """
+    st.markdown("**🗺️ Fluxograma completo do app (imagem)**")
+    st.caption(
+        "Recria as duas versões da imagem do fluxograma (retângulos + setas) mostrada em "
+        "\"Sobre o App\" - a completa (duas trilhas) e a trancada (para quem não desbloqueou o "
+        "conteúdo administrativo)."
+    )
+    st.caption(
+        "💡 Só a IMAGEM precisa desse botão. Os cartões de texto do resto de \"Sobre o App\" "
+        "(inclusive os da própria seção \"Fluxograma completo do app\") já são código Python - "
+        "aparecem sempre atualizados sozinhos, sem precisar gerar nada."
+    )
+
+    try:
+        atual_completo = obter_configuracao_com_data(CHAVE_FLUXOGRAMA_COMPLETO_BASE64)
+        hash_salvo_completo = obter_configuracao(CHAVE_FLUXOGRAMA_COMPLETO_HASH)
+        hash_salvo_publico = obter_configuracao(CHAVE_FLUXOGRAMA_PUBLICO_HASH)
+    except TursoError as erro:
+        st.error(str(erro))
+        atual_completo = None
+        hash_salvo_completo = None
+        hash_salvo_publico = None
+
+    hash_agora_completo = hash_fluxograma_completo()
+    hash_agora_publico = hash_fluxograma_publico()
+    sem_alteracao_pendente = (
+        hash_salvo_completo == hash_agora_completo and hash_salvo_publico == hash_agora_publico
+    )
+
+    if not atual_completo:
+        st.info(
+            "Nenhuma versão gerada pelo app ainda - \"Sobre o App\" está servindo as imagens "
+            "padrão incluídas no repositório. Clique no botão abaixo para gerar pelo Turso."
+        )
+    elif sem_alteracao_pendente:
+        _, atualizado_em = atual_completo
+        st.success(
+            f"✅ Atualizado - sem alterações pendentes. Última geração: "
+            f"{formatar_data_hora_brasil(atualizado_em)}."
+        )
+    else:
+        _, atualizado_em = atual_completo
+        st.warning(
+            f"⚠️ Há alterações no desenho do fluxograma (no código, ver "
+            f"`core/gerador_fluxograma.py`) que ainda não foram enviadas para a imagem - a "
+            f"última geração foi em {formatar_data_hora_brasil(atualizado_em)}, com uma versão "
+            f"anterior do conteúdo. Clique no botão abaixo para atualizar o que os usuários veem."
+        )
+
+    if action_button("🔄 Gerar/Atualizar fluxograma agora", key="btn_gerar_fluxograma"):
+        with loading_overlay("Gerando o fluxograma, aguarde..."):
+            try:
+                bytes_completo = gerar_fluxograma_completo_bytes()
+                bytes_publico = gerar_fluxograma_publico_bytes()
+                definir_configuracao(
+                    CHAVE_FLUXOGRAMA_COMPLETO_BASE64, base64.b64encode(bytes_completo).decode("ascii")
+                )
+                definir_configuracao(CHAVE_FLUXOGRAMA_COMPLETO_HASH, hash_agora_completo)
+                definir_configuracao(
+                    CHAVE_FLUXOGRAMA_PUBLICO_BASE64, base64.b64encode(bytes_publico).decode("ascii")
+                )
+                definir_configuracao(CHAVE_FLUXOGRAMA_PUBLICO_HASH, hash_agora_publico)
+            except Exception as erro:  # graphviz e TursoError não compartilham uma base comum
+                erro_geracao: Optional[Exception] = erro
+            else:
+                erro_geracao = None
+                registrar_log(
+                    TIPO_PAINEL, AuthManager.current_username(),
+                    "Gerou/atualizou as imagens do Fluxograma completo do app",
+                )
+        finish_action("btn_gerar_fluxograma")
+        if erro_geracao:
+            st.error(f"Não foi possível gerar/salvar o fluxograma: {erro_geracao}")
+        else:
+            st.success(
+                "Fluxograma gerado e salvo com sucesso - já disponível em \"Sobre o App\" para "
+                "qualquer usuário, imediatamente (não precisa recarregar nem esperar nada)."
+            )
+            col_completo, col_publico = st.columns(2)
+            with col_completo:
+                st.image(bytes_completo, caption="Versão completa", use_container_width=True)
+                st.download_button(
+                    "⬇️ Baixar (manter assets/ em dia)",
+                    data=bytes_completo,
+                    file_name="fluxograma_completo.png",
+                    mime="image/png",
+                    key="btn_baixar_fluxograma_completo_recem_gerado",
+                )
+            with col_publico:
+                st.image(bytes_publico, caption="Versão trancada (sem desbloqueio)", use_container_width=True)
+                st.download_button(
+                    "⬇️ Baixar (manter assets/ em dia)",
+                    data=bytes_publico,
+                    file_name="fluxograma_publico.png",
+                    mime="image/png",
+                    key="btn_baixar_fluxograma_publico_recem_gerado",
+                )
+            st.caption(
+                "💡 Esses downloads são BYTE A BYTE iguais ao que acabou de ser salvo no banco de "
+                "dados - baixe os dois, substitua os arquivos em `assets/fluxograma_completo.png` "
+                "e `assets/fluxograma_publico.png` no seu repositório local, e faça `git add` + "
+                "`git commit` + `git push`. Isso é só para manter o repositório arrumado/igual ao "
+                "que está no ar - os usuários já estão recebendo a versão certa mesmo sem você "
+                "fazer esse passo."
             )

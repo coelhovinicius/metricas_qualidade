@@ -8,15 +8,15 @@ visível pra QUALQUER pessoa logada, não só o admin, porque o objetivo é
 ajudar qualquer um a entender o app inteiro, inclusive o que existe do lado
 da Administração mesmo que ela não tenha acesso a essa página.
 
-Os diagramas são montados em HTML/CSS puro (ver classes `.sobre-fluxo-*`/
-`.sobre-catalogo-*`/`.sobre-estado-*` em `ui/theme.py`), de propósito: nada
-de Graphviz (precisa do binário `dot` instalado no sistema - mais uma coisa
-pra falhar silenciosamente num Windows sem isso) nem Mermaid via JavaScript
-injetado (mesma classe de fragilidade dos scripts de rolagem/foco já usados
-em outras páginas, mas sem necessidade aqui, já que o diagrama é estático).
-HTML/CSS puro roda 100% offline, sem dependência nova, e herda a mesma
-paleta/fonte do resto do app em vez de parecer um diagrama genérico colado
-por cima.
+Os diagramas em cartões (a maior parte da página) são montados em HTML/CSS
+puro (ver classes `.sobre-fluxo-*`/`.sobre-catalogo-*`/`.sobre-estado-*` em
+`ui/theme.py`), de propósito: recalculam a cada carregamento de página, e uma
+dependência de sistema a mais ali (Graphviz/Mermaid) seria risco
+desnecessário. Já a imagem do "Fluxograma completo do app" (retângulos +
+setas) É gerada com Graphviz (ver `core/gerador_fluxograma.py`) - mas raras
+vezes, não a cada carregamento: o resultado fica pronto, guardado no banco de
+dados (Turso) ou em `assets/`, e esta página só SERVE o PNG já pronto (ver
+`_obter_bytes_fluxograma` abaixo), nunca gera nada na hora.
 """
 
 from __future__ import annotations
@@ -30,6 +30,8 @@ import streamlit as st
 from auth.auth_manager import AuthManager
 from core.config_app import (
     CHAVE_CODIGO_VISAO_ADMIN_SOBRE_APP,
+    CHAVE_FLUXOGRAMA_COMPLETO_BASE64,
+    CHAVE_FLUXOGRAMA_PUBLICO_BASE64,
     CHAVE_GUIA_PDF_BASE64,
     obter_configuracao,
 )
@@ -44,6 +46,18 @@ _ASSETS_DIR = Path(__file__).resolve().parent.parent.parent / "assets"
 # no próprio repositório, para quando ainda ninguém clicou em "🔄 Gerar/
 # Atualizar PDF agora" em Administração neste ambiente.
 _CAMINHO_GUIA_PDF = _ASSETS_DIR / "Guia_do_Usuario_QA.pdf"
+
+# Imagens do "Fluxograma completo do app" em retângulos + setas de verdade
+# (complementando os cartões em HTML/CSS logo abaixo, que continuam existindo
+# porque trazem a descrição de cada passo com mais detalhe do que cabe numa
+# caixinha de diagrama). Duas versões, pela mesma regra de segregação por
+# papel do resto desta página (ver `_usuario_tem_visao_admin`): uma com as
+# duas trilhas, outra com a trilha administrativa trancada. Cada uma tem um
+# nome de arquivo local (fallback, incluído no repositório) e uma chave no
+# Turso (fonte "viva", gravada pelo botão "🔄 Gerar/Atualizar fluxograma
+# agora" em Administração - ver `_obter_bytes_fluxograma` abaixo).
+_CAMINHO_FLUXOGRAMA_COMPLETO = _ASSETS_DIR / "fluxograma_completo.png"
+_CAMINHO_FLUXOGRAMA_PUBLICO = _ASSETS_DIR / "fluxograma_publico.png"
 
 
 def _obter_bytes_guia_pdf() -> Optional[bytes]:
@@ -69,6 +83,30 @@ def _obter_bytes_guia_pdf() -> Optional[bytes]:
             pass
     if _CAMINHO_GUIA_PDF.exists():
         return _CAMINHO_GUIA_PDF.read_bytes()
+    return None
+
+
+def _obter_bytes_fluxograma(chave_base64: str, caminho_fallback: Path) -> Optional[bytes]:
+    """
+    Bytes do PNG do fluxograma (uma das duas versões), prontos para
+    `st.image`/`st.download_button` - mesma prioridade de
+    `_obter_bytes_guia_pdf` acima: (1) versão gravada no Turso pelo botão
+    "🔄 Gerar/Atualizar fluxograma agora" em Administração; (2) se ainda não
+    existir nenhuma lá, cai para o arquivo padrão incluído no repositório
+    (gerado por `scripts/gerar_fluxograma_diagrama.py`). Qualquer falha ao
+    falar com o banco é silenciosa aqui, com o mesmo fallback.
+    """
+    try:
+        base64_imagem = obter_configuracao(chave_base64)
+    except Exception:
+        base64_imagem = None
+    if base64_imagem:
+        try:
+            return base64.b64decode(base64_imagem)
+        except (ValueError, TypeError):
+            pass
+    if caminho_fallback.exists():
+        return caminho_fallback.read_bytes()
     return None
 
 
@@ -175,25 +213,28 @@ def _bifurcacao(ramos: list[tuple[str, list[tuple[str, str, str]]]]) -> None:
     só funciona se os ramos forem filhos diretos do mesmo elemento pai no
     HTML - com um `st.markdown` por cartão, cada um viraria um bloco
     separado do Streamlit, não filhos de um `.sobre-fluxo-bifurcacao` comum.
+
+    Cada pedaço de HTML abaixo é montado numa ÚNICA LINHA (sem indentação/
+    quebra de linha no meio), de propósito - já vimos isso quebrar de
+    verdade: ao juntar vários pedaços em várias linhas com `"".join(...)`,
+    sobra uma linha em branco (só espaços) na junção de um cartão com o
+    próximo, e o parser de Markdown do Streamlit entende isso como O FIM do
+    bloco de HTML - tudo que vem depois passa a ser lido como texto puro
+    (aparecendo na tela como se fosse um bloco de código, com as tags
+    `<div>` visíveis em vez de renderizadas). Uma única linha contínua por
+    cartão, sem nenhuma linha em branco em lugar nenhum, elimina esse risco.
     """
     colunas_html = []
     for titulo_ramo, passos in ramos:
         passos_html = "".join(
-            f"""
-            <div class="sobre-fluxo-passo">
-                <div class="sobre-fluxo-numero">{numero}</div>
-                <div class="sobre-fluxo-texto"><strong>{titulo}</strong>{f"<br>{texto}" if texto else ""}</div>
-            </div>
-            """
+            f'<div class="sobre-fluxo-passo"><div class="sobre-fluxo-numero">{numero}</div>'
+            f'<div class="sobre-fluxo-texto"><strong>{titulo}</strong>'
+            f'{f"<br>{texto}" if texto else ""}</div></div>'
             for numero, titulo, texto in passos
         )
         colunas_html.append(
-            f"""
-            <div class="sobre-fluxo-ramo">
-                <div class="sobre-fluxo-ramo-titulo">{titulo_ramo}</div>
-                {passos_html}
-            </div>
-            """
+            f'<div class="sobre-fluxo-ramo"><div class="sobre-fluxo-ramo-titulo">{titulo_ramo}</div>'
+            f'{passos_html}</div>'
         )
     st.markdown(
         f'<div class="sobre-fluxo-bifurcacao">{"".join(colunas_html)}</div>',
@@ -206,21 +247,23 @@ def _callout(texto: str) -> None:
 
 
 def _catalogo_categoria(titulo: str, cartoes: list[tuple[str, str]]) -> None:
-    """Um grupo de "cartões" de gráfico (título + descrição de uma linha), organizados em grade - ver `_sec_catalogo_graficos`."""
+    """
+    Um grupo de "cartões" de gráfico (título + descrição de uma linha),
+    organizados em grade - ver `_sec_catalogo_graficos`.
+
+    Mesmo cuidado de `_bifurcacao` acima (ver docstring lá): cada cartão é
+    montado numa única linha, sem nenhuma linha em branco na junção entre
+    cartões - isso já quebrou a renderização (virava texto/código visível em
+    vez de HTML) quando escrito em várias linhas indentadas.
+    """
     cartoes_html = "".join(
-        f"""
-        <div class="sobre-catalogo-card">
-            <div class="sobre-catalogo-card-titulo">{titulo_cartao}</div>
-            <div class="sobre-catalogo-card-desc">{desc_cartao}</div>
-        </div>
-        """
+        f'<div class="sobre-catalogo-card"><div class="sobre-catalogo-card-titulo">{titulo_cartao}</div>'
+        f'<div class="sobre-catalogo-card-desc">{desc_cartao}</div></div>'
         for titulo_cartao, desc_cartao in cartoes
     )
     st.markdown(
-        f"""
-        <div class="sobre-catalogo-categoria">{titulo}</div>
-        <div class="sobre-catalogo-grade">{cartoes_html}</div>
-        """,
+        f'<div class="sobre-catalogo-categoria">{titulo}</div>'
+        f'<div class="sobre-catalogo-grade">{cartoes_html}</div>',
         unsafe_allow_html=True,
     )
 
@@ -290,6 +333,27 @@ def _sec_fluxograma_completo(mostrar_trilha_admin: bool) -> None:
         "(Administração) não tem uma 'ordem' fixa como a da esquerda, e fica disponível o tempo "
         "todo pra quem loga como `admin`."
     )
+
+    if mostrar_trilha_admin:
+        chave_base64, caminho_fallback = CHAVE_FLUXOGRAMA_COMPLETO_BASE64, _CAMINHO_FLUXOGRAMA_COMPLETO
+    else:
+        chave_base64, caminho_fallback = CHAVE_FLUXOGRAMA_PUBLICO_BASE64, _CAMINHO_FLUXOGRAMA_PUBLICO
+    bytes_imagem = _obter_bytes_fluxograma(chave_base64, caminho_fallback)
+    if bytes_imagem:
+        st.image(bytes_imagem, use_container_width=True)
+        st.download_button(
+            "⬇️ Baixar este fluxograma (imagem)",
+            data=bytes_imagem,
+            file_name=caminho_fallback.name,
+            mime="image/png",
+            key=f"btn_baixar_fluxograma_{caminho_fallback.stem}",
+        )
+    st.caption(
+        "A imagem acima é o resumo visual (retângulos + setas); os cartões abaixo detalham cada "
+        "passo com uma descrição de uma ou duas linhas."
+    )
+    st.markdown("<br>", unsafe_allow_html=True)
+
     if mostrar_trilha_admin:
         ramo_admin = ("⚙️ Trilha de quem administra (login admin)", [
             ("A", "Configurar a conta de serviço do Google Drive", "Uma vez só, em Administração → Google Drive - ver aviso 🔗 abaixo."),

@@ -36,16 +36,18 @@ def render_header(titulo: str, subtitulo: str = "") -> None:
     else:
         logo_html = ""
 
+    # Montado como UMA linha só (sem quebras de linha/indentação no meio do
+    # HTML), de propósito: o parser de Markdown do Streamlit trata uma linha
+    # em branco (ou uma linha vazia/só com espaços - o que `{logo_html}`
+    # sozinho numa linha vira quando não há logo) NO MEIO de um bloco HTML
+    # como o FIM desse bloco - tudo que vem depois passa a ser lido como
+    # texto/bloco de código indentado, em vez de HTML de verdade. Já
+    # aconteceu de verdade aqui quando `logo_html` ficava vazio. Uma única
+    # linha contínua elimina esse risco por completo.
     st.markdown(
-        f"""
-        <div class="refu-header">
-            {logo_html}
-            <div class="refu-header-texto">
-                <div class="refu-header-titulo">{titulo}</div>
-                <div class="refu-header-subtitulo">{subtitulo}</div>
-            </div>
-        </div>
-        """,
+        f'<div class="refu-header">{logo_html}<div class="refu-header-texto">'
+        f'<div class="refu-header-titulo">{titulo}</div>'
+        f'<div class="refu-header-subtitulo">{subtitulo}</div></div></div>',
         unsafe_allow_html=True,
     )
 

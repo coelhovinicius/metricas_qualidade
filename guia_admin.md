@@ -70,6 +70,8 @@ A página "Sobre o App" (visível a qualquer pessoa logada) descreve os fluxos d
 - Deixar o campo em branco e salvar **desativa** o desbloqueio para todo mundo (volta a ficar visível só para você).
 - Isso **não é** uma segunda senha de login — não dá acesso ao Painel Administrativo de verdade, só à descrição textual/fluxograma de como ele funciona.
 
+**Sobre a imagem do fluxograma:** além dos cartões de texto, "Sobre o App" também mostra uma imagem do fluxo completo (retângulos + setas). Essa imagem **não se atualiza sozinha** quando algo no fluxo do app muda — precisa ser regenerada, com um clique em Administração → aba "📘 Guia do Usuário" → "🔄 Gerar/Atualizar fluxograma agora" (ver seção 9). Se você notar a imagem desatualizada em relação ao que o app realmente faz, é por isso.
+
 ## 5. Aba: Solicitações de Acesso
 
 A aba mostra quatro grupos, cada um numa seção própria:
@@ -149,6 +151,13 @@ Gera (ou atualiza) o PDF **"Guia Completo do Usuário"** — o mesmo oferecido p
 - Depois de gerar, aparece também um botão opcional **"⬇️ Baixar esta versão para manter o assets/ do repositório em dia"** — útil só se você quiser manter o arquivo `.pdf` versionado no Git igual ao que está no ar (não afeta o que os usuários recebem, que já está atualizado assim que você clica em "Gerar/Atualizar").
 
 > Esse PDF é escrito de propósito sem nenhuma menção ao nome do produto/marca e sem nenhum dado específico deste ambiente (credenciais, e-mails reais, URLs de organização) — como ele pode ser baixado e repassado livremente por qualquer usuário logado, o conteúdo evita depender de informação sensível ou de um nome específico.
+
+**Logo abaixo, um segundo bloco separado por uma linha divisória: "🗺️ Fluxograma completo do app (imagem)"** — mesma lógica do PDF acima, mas para as duas imagens (retângulos + setas) do "Fluxograma completo do app" mostrado em "Sobre o App" (a completa e a trancada, para quem não desbloqueou o conteúdo administrativo).
+
+- Mesmo indicador ✅/⚠️, comparando o desenho do fluxo no código com a última geração.
+- Clique em **🔄 Gerar/Atualizar fluxograma agora** para gerar as duas versões de uma vez e salvar no banco de dados (Turso) — disponível para todo mundo em "Sobre o App" imediatamente.
+- Depois de gerar, as duas imagens aparecem lado a lado na tela, cada uma com um botão opcional de download (mesmo propósito do botão do PDF: manter os arquivos `assets/fluxograma_completo.png`/`assets/fluxograma_publico.png` do repositório em dia, se você quiser).
+- Só os cartões de TEXTO do resto de "Sobre o App" (inclusive os da própria seção "Fluxograma completo do app") não precisam desse botão — já são código, aparecem sempre atualizados sozinhos.
 
 ## 10. Importar dados
 

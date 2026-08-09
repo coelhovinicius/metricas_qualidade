@@ -19,6 +19,7 @@ Acesso multiusuário com login, controle de quem pode ver o quê e um fluxo de s
   - [Relatório completo em PDF](#relatório-completo-em-pdf)
   - [Painel administrativo](#painel-administrativo)
   - [Sobre o App e Guia do Usuário](#sobre-o-app-e-guia-do-usuário)
+    - [Mantendo o fluxograma em dia](#mantendo-o-fluxograma-em-dia)
 - [Estrutura do projeto](#estrutura-do-projeto)
 - [Stack técnica](#stack-técnica)
 - [Como rodar localmente](#como-rodar-localmente)
@@ -131,16 +132,38 @@ Visível só para o usuário `admin` (menu lateral → "⚙️ Administração")
 - **📋 Solicitações de Acesso** — pendentes/já criadas/revogadas/rejeitadas, com ações de aprovar/rejeitar/revogar/reverter/recuperar/excluir (individual ou em massa), cada uma atrás de um modal de confirmação.
 - **🗒️ Logs do Sistema** — três categorias (Ações no Painel, Erros Técnicos, Login/Acessos), com seletor de quantidade, modo "com detalhes" e limpeza de entradas antigas por número de dias.
 - **📁 Google Drive** — status da credencial da conta de serviço (configurada nos Secrets/arquivo local, nunca pela tela) e um botão de testar conexão. A pasta em si é configurada por cada usuário, não aqui (ver [Importação de dados](#importação-de-dados)).
-- **📘 Guia do Usuário** — gera/atualiza, com um clique e sem precisar de terminal, o PDF do "Guia Completo do Usuário" oferecido em "Sobre o App" (ver próxima seção). Um indicador (✅/⚠️) avisa quando o conteúdo do guia no código mudou desde a última geração, comparando um hash do conteúdo — sem regenerar nada sozinho, a atualização continua manual por escolha de projeto.
+- **📘 Guia do Usuário** — dois blocos, cada um com o mesmo padrão (botão manual + indicador ✅/⚠️ de "alteração pendente" por hash do conteúdo, sem regenerar nada sozinho): (1) gera/atualiza o PDF do "Guia Completo do Usuário"; (2) gera/atualiza as duas imagens do "Fluxograma completo do app" (retângulos + setas). Os dois com um clique, sem precisar de terminal — ver próxima seção.
 
 ### Sobre o App e Guia do Usuário
 
 Página **"ℹ️ Sobre o App"**, visível para **qualquer pessoa logada** (não só o admin) — objetivo declarado: ajudar qualquer usuário a entender o app inteiro, inclusive o que existe do lado da Administração, mesmo sem ter acesso a ela.
 
-- Visão geral do fluxo principal e um **fluxograma completo** (HTML/CSS puro, sem dependência de Graphviz/Mermaid) com as duas trilhas que rodam em paralelo — quem usa o app no dia a dia, e quem administra — e onde uma trava a outra.
-- **Segregação de conteúdo por papel**: a trilha "quem administra" do fluxograma e a seção "Administração" ficam resumidas/escondidas por padrão para quem não é o admin. Quem administra pode liberar um código de acesso (ver [Painel administrativo](#painel-administrativo)) para desbloquear esse conteúdo, só na sessão de quem digitar o código certo — não é uma segunda camada de autenticação real, é um seletor de conteúdo informativo.
+- Visão geral do fluxo principal e um **fluxograma completo**, em duas versões complementares: (1) cartões em HTML/CSS puro, com descrição de cada passo, sem dependência de Graphviz/Mermaid; e (2) uma **imagem** (retângulos + setas, no estilo tradicional de diagrama de fluxo), gerada com Graphviz e servida já pronta (ver [Mantendo o fluxograma em dia](#mantendo-o-fluxograma-em-dia) logo abaixo sobre como atualizá-la). As duas mostram as mesmas duas trilhas que rodam em paralelo — quem usa o app no dia a dia, e quem administra — e onde uma trava a outra.
+- **Segregação de conteúdo por papel**: a trilha "quem administra" do fluxograma (nas duas versões, cartões e imagem) e a seção "Administração" ficam resumidas/escondidas por padrão para quem não é o admin. Quem administra pode liberar um código de acesso (ver [Painel administrativo](#painel-administrativo)) para desbloquear esse conteúdo, só na sessão de quem digitar o código certo — não é uma segunda camada de autenticação real, é um seletor de conteúdo informativo.
+- Cada imagem também tem um botão **"⬇️ Baixar este fluxograma (imagem)"**, logo abaixo dela, na própria tela.
 - **Guia Completo do Usuário**: o mesmo conteúdo de `GUIA_CONVIDADO.md`/`GUIA_ADMIN.md`, incluindo como gerar um PAT do Azure DevOps e quais colunas configurar na query, disponível na própria tela e como **PDF para baixar** (gerado por `core/gerador_guia_pdf.py`, ver [Painel administrativo](#painel-administrativo)). De propósito, sem nenhuma menção ao nome do produto/marca dentro desse PDF — como ele pode ser baixado e repassado livremente por qualquer usuário, o conteúdo evita depender de estar sempre associado a um nome específico.
 - Catálogo dos gráficos disponíveis, agrupados por tema.
+
+#### Mantendo o fluxograma em dia
+
+Diferente dos cartões de texto (que são código Python puro e aparecem sempre atualizados sozinhos), a **imagem** do fluxograma é gerada à parte e servida já pronta — então, sempre que um fluxo do app mudar de verdade (etapa nova, tela removida, caminho de importação novo, responsabilidade que passou a ser de outra trilha etc.), a imagem só reflete isso depois de ser regenerada. Dois jeitos de fazer isso, ambos produzindo o mesmo resultado (mesma função, `core/gerador_fluxograma.py`):
+
+**Caminho recomendado — pelo próprio app, sem terminal:** Administração → aba "📘 Guia do Usuário" → seção "🗺️ Fluxograma completo do app (imagem)" → botão **"🔄 Gerar/Atualizar fluxograma agora"**. Grava as duas imagens (completa e trancada) direto no banco de dados (Turso) — já valendo pra todo mundo em "Sobre o App", na hora, sem precisar de redeploy. Um indicador (✅/⚠️) avisa quando o desenho do fluxo no código mudou desde a última geração, comparando um hash do conteúdo — mesmo padrão já usado pelo PDF do Guia do Usuário, ver acima. Esse é o caminho pensado pro dia a dia: exige que o ambiente tenha o Graphviz disponível, e por isso `graphviz` está no `requirements.txt` e no `packages.txt` (ver [Deploy](#deploy)) — já configurado, não precisa instalar nada à parte para usar o botão.
+
+**Caminho alternativo — localmente, por linha de comando:** útil pra quem quer conferir a imagem antes de publicar, ou prefere manter `assets/fluxograma_completo.png`/`assets/fluxograma_publico.png` do repositório sempre iguais ao que está em produção (o botão acima não mexe nesses arquivos — só no banco de dados):
+
+```
+pip install graphviz          # binding Python (já é dependência do projeto)
+# e o binário do sistema (só na sua máquina, nunca precisa em produção):
+#   Ubuntu/Debian: sudo apt install graphviz
+#   macOS:         brew install graphviz
+#   Windows:       https://graphviz.org/download/
+python scripts/gerar_fluxograma_diagrama.py
+```
+
+Isso sobrescreve as duas imagens em `assets/`. Depois de editar o desenho do fluxo (as caixas e setas de cada trilha ficam em `_montar_trilha_usuario`, `_montar_trilha_admin_completa` e `_montar_trilha_admin_trancada`, dentro de `core/gerador_fluxograma.py`), confira visualmente e faça commit + push das duas imagens.
+
+Se preferir não mexer em nada disso manualmente, também dá pra pedir para a IA (Claude) fazer esse passo a passo — só apontar o que mudou no fluxo do app.
 
 ## Estrutura do projeto
 
@@ -154,9 +177,11 @@ core/
   azure_devops_client.py      # cliente da API REST do Azure DevOps
   column_mapper.py            # detecção automática de colunas + normalização de valores
   config_app.py                # configuração genérica (Turso, chave/valor): pasta do Drive por
-                                # usuário, PDF do guia + hash, código de acesso ao conteúdo admin
+                                # usuário, PDF do guia + hash, fluxograma (imagem) + hash,
+                                # código de acesso ao conteúdo admin
   data_loader.py               # leitura/parse de CSV/TXT (encoding, delimitador, limpeza)
   fuso_horario.py              # conversão de datas/horas para o fuso de Brasília
+  gerador_fluxograma.py        # monta (em memória, Graphviz) as duas imagens do fluxograma completo
   gerador_guia_pdf.py          # monta (em memória) o PDF do Guia Completo do Usuário
   google_drive_client.py       # cliente da API do Google Drive (conta de serviço)
   logs_sistema.py              # logs de auditoria/erros/acessos (tabela no Turso)
@@ -174,10 +199,13 @@ ui/
     sobre_page.py               # página "Sobre o App" + Guia do Usuário (ver README, seção própria)
 utils/
   session.py                    # inicialização/limpeza centralizada do session_state
-assets/                        # logotipos, imagens e o PDF padrão do Guia do Usuário
+assets/                        # logotipos, imagens (inclusive as duas do fluxograma) e o PDF padrão do Guia do Usuário
+  fluxograma_completo.png                # fluxograma em imagem, com as duas trilhas (ver scripts/gerar_fluxograma_diagrama.py)
+  fluxograma_publico.png                 # mesma imagem, sem a trilha administrativa (para quem não desbloqueou)
 scripts/
   gerar_hash_senha.py                    # gera o hash bcrypt de uma senha nova
   gerar_guia_usuario_pdf.py              # gera o PDF do Guia do Usuário localmente (ver core/gerador_guia_pdf.py)
+  gerar_fluxograma_diagrama.py           # gera as duas imagens do fluxograma (Graphviz) - ver "Mantendo o fluxograma em dia"
   migrar_credenciais_para_secrets.py     # converte auth/users.yaml existente no bloco TOML dos Secrets
 gerar_roi_pdf.py              # utilitário avulso de geração de PDF (ver o próprio arquivo)
 Dockerfile / docker-entrypoint.sh / .dockerignore   # hospedagem alternativa via Docker (ver FALLBACK_DEPLOY.md)
@@ -203,6 +231,7 @@ FALLBACK_DEPLOY.md            # hospedagem alternativa (Docker) caso o Streamlit
 | Gráficos | Plotly Express / Plotly Graph Objects |
 | Relatório do dashboard em PDF | kaleido (rasterização dos gráficos) + reportlab (montagem do PDF) |
 | Guia do Usuário em PDF | reportlab (mesma biblioteca, uso independente - ver `core/gerador_guia_pdf.py`) |
+| Fluxograma completo (imagem) | Graphviz (binding Python `graphviz` + binário `dot` do sistema - ver `core/gerador_fluxograma.py`) |
 | Detecção de encoding | chardet |
 | Configuração de usuários (fallback local) | PyYAML |
 | Integração com Azure DevOps | requests (API REST, sem SDK) |
@@ -340,7 +369,7 @@ Hospedado no **Streamlit Community Cloud**, apontando para este repositório. Qu
 Dois arquivos controlam o ambiente de execução no Streamlit Community Cloud, além do código:
 
 - **`requirements.txt`** — dependências Python. `streamlit` e `starlette` estão travados numa versão exata específica de propósito (ver [Stack técnica](#stack-técnica)) — evite trocar por `>=` sem testar a combinação primeiro.
-- **`packages.txt`** — dependências de sistema (`apt-get install`), hoje só com uma linha, `chromium`. Necessário para o relatório em PDF funcionar em produção: garante as bibliotecas de sistema (`libnss3`, `libgtk-3-0`, `libasound2` etc.) que qualquer Chrome/Chromium precisa para conseguir abrir dentro do container do Streamlit Cloud — sem isso, o navegador que o `kaleido` baixa sozinho até é baixado com sucesso, mas falha ao iniciar ("The browser seemed to close immediately after starting"). Qualquer alteração neste arquivo exige um rebuild completo do ambiente (reboot manual do app pelo painel do Streamlit Cloud costuma ser necessário).
+- **`packages.txt`** — dependências de sistema (`apt-get install`), duas linhas: `chromium` (necessário para o relatório em PDF funcionar em produção: garante as bibliotecas de sistema — `libnss3`, `libgtk-3-0`, `libasound2` etc. — que qualquer Chrome/Chromium precisa para conseguir abrir dentro do container do Streamlit Cloud; sem isso, o navegador que o `kaleido` baixa sozinho até é baixado com sucesso, mas falha ao iniciar, "The browser seemed to close immediately after starting") e `graphviz` (o binário `dot`, necessário para o botão "🔄 Gerar/Atualizar fluxograma agora" em Administração — ver [Mantendo o fluxograma em dia](#mantendo-o-fluxograma-em-dia)). Qualquer alteração neste arquivo exige um rebuild completo do ambiente (reboot manual do app pelo painel do Streamlit Cloud costuma ser necessário).
 
 **Hospedagem alternativa**: se o Streamlit Community Cloud ficar indisponível, este mesmo app pode rodar via Docker (mesmo código, sem alterações) em serviços como Hugging Face Spaces ou Render — ver **[FALLBACK_DEPLOY.md](FALLBACK_DEPLOY.md)** para o passo a passo completo.
 
