@@ -35,6 +35,14 @@ CHAVES_PADRAO = {
     "azure_ultimo_projeto_usado": None,
     "azure_ultimos_area_paths_usados": [],
     "azure_ultima_query_usada": None,
+    # ---- Navegação em pastas/subpastas da busca no Google Drive ----
+    # `drive_pilha_pastas`: caminho da pasta raiz (a PRÓPRIA pasta que o
+    # usuário logado configurou, ver core/config_app.py) até a pasta em que
+    # a pessoa está navegando agora - cada item é {"id": ..., "nome": ...};
+    # entrar numa subpasta empilha, "Voltar" desempilha (ver
+    # core/google_drive_client.py e ui/pages/upload_page.py).
+    "drive_pilha_pastas": [],
+    "drive_conteudo_cache": None,  # ConteudoPasta já buscado da pasta atual (evita rebuscar a cada rerun)
 }
 
 
@@ -135,3 +143,14 @@ def resetar_selecao_azure_devops(manter_organizacao: bool = False) -> None:
     st.session_state["azure_area_paths_selecionados"] = []
     st.session_state["azure_queries_disponiveis"] = []
     st.session_state["azure_query_selecionada_id"] = None
+
+
+def resetar_selecao_google_drive() -> None:
+    """
+    Volta a navegação da busca no Google Drive pra pasta raiz configurada -
+    usado quando o usuário troca a própria pasta raiz (ver
+    `ui/pages/upload_page.py`), ou quando a pasta raiz configurada ainda não
+    bate com a primeira pasta da pilha atual (mesmo arquivo).
+    """
+    st.session_state["drive_pilha_pastas"] = []
+    st.session_state["drive_conteudo_cache"] = None

@@ -42,3 +42,12 @@ requests>=2.31
 # precisar baixar nada.
 kaleido>=1.0
 reportlab>=4.0
+# google-api-python-client / google-auth: usados só pela busca de arquivos
+# .csv numa pasta compartilhada do Google Drive (core/google_drive_client.py
+# → tela "Importar Dados" → "Buscar arquivo no Google Drive"). Autenticação
+# via Conta de Serviço (sem tela de login interativa) - credenciais vêm do
+# st.secrets["google_drive"] em produção (Streamlit Community Cloud) ou de
+# core/google_drive_credentials.json localmente (nunca versionado - ver
+# .gitignore).
+google-api-python-client>=2.100
+google-auth>=2.23

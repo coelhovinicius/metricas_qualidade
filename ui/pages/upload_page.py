@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import time
 
 import streamlit as st
@@ -17,10 +18,23 @@ from core.azure_devops_client import (
     obter_identidade_autenticada,
 )
 from core.column_mapper import MapeamentoColunas, detectar_mapeamento, normalizar_texto
+from core.config_app import chave_pasta_raiz_google_drive, definir_configuracao, obter_configuracao
 from core.data_loader import DataLoadError, ResultadoCarga, carregar_arquivo
+from core.google_drive_client import (
+    GoogleDriveError,
+    baixar_arquivo_csv,
+    email_conta_servico,
+    extrair_id_pasta_do_link,
+    listar_pastas_e_arquivos_csv,
+    testar_conexao as testar_conexao_drive,
+)
 from core.logs_sistema import TIPO_ERRO, TIPO_PAINEL, registrar_log
 from ui.components import action_button, finish_action, loading_overlay, render_header
-from utils.session import resetar_dados_importados, resetar_selecao_azure_devops
+from utils.session import (
+    resetar_dados_importados,
+    resetar_selecao_azure_devops,
+    resetar_selecao_google_drive,
+)
 
 # Organizações sugeridas no dropdown (apenas o rótulo aparece pronto - nada é
 # carregado da API até o usuário clicar em "Carregar organização"). Se sua
@@ -41,19 +55,7 @@ ORGANIZACOES_SUGERIDAS = ["refuturiza"]
 # continua funcionando normalmente pra qualquer usuário/nome que não esteja
 # nesta lista.
 APELIDOS_DONO_PAT_POR_USUARIO_APP: dict[str, set[str]] = {
-    "admin": {
-        "Vinícius Bemfica",
-        "Vinícius Coelho Bemfica",
-        "Vinicius Bemfica",
-        "Vinicius Coelho Bemfica",
-        "Vinícius Benfica",
-        "Vinícius Coelho Benfica",
-        "Vinicius Benfica",
-        "Vinicius Coelho Benfica",
-        "Vinicius Coelho",
-        "Vinícius Coelho",
-        "vinicius.refuturiza"
-    }
+    "admin": {"Vinícius Bemfica"},
 }
 
 CAMPOS_MAPEAVEIS = [
@@ -75,7 +77,8 @@ CAMPOS_MAPEAVEIS = [
 CHAVE_CAMPOS_PERSONALIZADOS = "campos_personalizados_temp"
 
 OPCAO_ORIGEM_MANUAL = "Enviar arquivo (.csv/.txt)"
-OPCAO_ORIGEM_AZURE = "Buscar automaticamente do Azure DevOps"
+OPCAO_ORIGEM_AZURE = "Buscar Query no Azure DevOps"
+OPCAO_ORIGEM_DRIVE = "Buscar arquivo no Google Drive"
 
 
 def _opcao_coluna(colunas: list[str], atual: str | None) -> list[str]:
@@ -85,18 +88,19 @@ def _opcao_coluna(colunas: list[str], atual: str | None) -> list[str]:
 def render_upload_page() -> None:
     render_header(
         titulo="Importar dados de testes",
-        subtitulo="Envie um arquivo .csv/.txt ou busque automaticamente do Azure DevOps.",
+        subtitulo="Envie um arquivo .csv/.txt, busque uma query do Azure DevOps, ou puxe um arquivo já salvo no Google Drive.",
     )
 
     # O Streamlit "esquece" o valor de um widget sempre que ele deixa de ser
     # renderizado por pelo menos uma execução do script (ex.: o usuário foi
     # pra outra página do menu, onde este `st.radio` não é chamado) - ao
     # voltar, o widget nasce de novo do zero e cairia sempre na 1ª opção
-    # ("Enviar arquivo"), escondendo todo o passo a passo do Azure DevOps já
-    # configurado antes. Por isso o valor escolhido é espelhado numa chave
-    # "solta" (não presa a nenhum widget, então nunca é esquecida) e usada
-    # como valor inicial (`index=`) sempre que o widget nascer de novo.
-    opcoes_origem = [OPCAO_ORIGEM_MANUAL, OPCAO_ORIGEM_AZURE]
+    # ("Enviar arquivo"), escondendo todo o passo a passo já configurado
+    # antes (Azure DevOps ou Google Drive). Por isso o valor escolhido é
+    # espelhado numa chave "solta" (não presa a nenhum widget, então nunca é
+    # esquecida) e usada como valor inicial (`index=`) sempre que o widget
+    # nascer de novo.
+    opcoes_origem = [OPCAO_ORIGEM_MANUAL, OPCAO_ORIGEM_AZURE, OPCAO_ORIGEM_DRIVE]
     origem_persistida = st.session_state.get("origem_importacao_persistida", OPCAO_ORIGEM_MANUAL)
     indice_origem = opcoes_origem.index(origem_persistida) if origem_persistida in opcoes_origem else 0
 
@@ -111,8 +115,10 @@ def render_upload_page() -> None:
 
     if origem == OPCAO_ORIGEM_MANUAL:
         _renderizar_importacao_manual()
-    else:
+    elif origem == OPCAO_ORIGEM_AZURE:
         _renderizar_importacao_azure_devops()
+    else:
+        _renderizar_importacao_google_drive()
 
     if st.session_state.get("erro_carga"):
         st.error(st.session_state["erro_carga"])
@@ -587,6 +593,201 @@ def _renderizar_importacao_azure_devops() -> None:
                     f"Projeto: '{projeto_selecionado}' · {len(dataframe)} itens",
                 )
         finish_action("btn_baixar_azure_devops")
+        st.rerun()
+
+
+def _renderizar_importacao_google_drive() -> None:
+    st.caption(
+        "Explora uma pasta do SEU Google Drive (não uma pasta compartilhada de outra pessoa), "
+        "pra você escolher um arquivo .csv que já tenha exportado de uma query do Azure DevOps "
+        "e deixado lá (ou numa subpasta)."
+    )
+
+    email_servico = email_conta_servico()
+    if not email_servico:
+        st.warning(
+            "A conta de serviço do Google Drive ainda não foi configurada neste app. Peça para "
+            "o administrador configurar em Administração → Google Drive."
+        )
+        return
+
+    # Cada usuário logado guarda a PRÓPRIA pasta raiz, numa chave separada
+    # por username (ver core/config_app.py) - de propósito, não existe mais
+    # uma pasta única/global configurada pelo administrador: cada pessoa
+    # compartilha a pasta que ela mesma escolher com a conta de serviço, e
+    # configura esse link aqui, sem depender de ninguém pra trocar depois.
+    # Isso também significa que ninguém enxerga, por aqui, a pasta
+    # configurada por outra pessoa - só a sua própria.
+    username = AuthManager.current_username()
+    chave_pasta = chave_pasta_raiz_google_drive(username)
+    pasta_raiz_id = obter_configuracao(chave_pasta)
+
+    with st.expander(
+        "⚙️ Configurar/trocar a minha pasta do Google Drive", expanded=not pasta_raiz_id
+    ):
+        st.caption(
+            "1️⃣ No Google Drive, compartilhe a pasta que você quer usar (botão direito na "
+            "pasta → **Compartilhar** → cole o e-mail abaixo → permissão de **Leitor**):"
+        )
+        st.code(email_servico, language=None)
+        st.caption("2️⃣ Copie o link dessa pasta (botão direito → **Copiar link**) e cole abaixo:")
+        link_ou_id_digitado = st.text_input(
+            "Link ou ID da minha pasta",
+            key="drive_input_minha_pasta_raiz",
+            placeholder="https://drive.google.com/drive/folders/XXXXXXXXXXXXXXXXXXXX",
+        )
+        if action_button("Salvar minha pasta", key="btn_salvar_minha_pasta_drive"):
+            if not link_ou_id_digitado.strip():
+                st.warning("Cole o link ou o ID da pasta antes de salvar.")
+            else:
+                novo_id = extrair_id_pasta_do_link(link_ou_id_digitado)
+                with loading_overlay("Confirmando acesso à pasta antes de salvar, aguarde..."):
+                    try:
+                        # Confirma que a conta de serviço realmente enxerga essa
+                        # pasta ANTES de salvar - evita configurar um ID errado
+                        # (ou uma pasta ainda não compartilhada) sem nenhum
+                        # aviso, o que só apareceria na hora de navegar.
+                        testar_conexao_drive(novo_id)
+                    except GoogleDriveError as erro:
+                        st.session_state["erro_minha_pasta_raiz_drive"] = str(erro)
+                    else:
+                        definir_configuracao(chave_pasta, novo_id)
+                        resetar_selecao_google_drive()
+                        st.session_state["erro_minha_pasta_raiz_drive"] = None
+                        registrar_log(
+                            TIPO_PAINEL, username,
+                            f"Configurou a própria pasta do Google Drive para o ID '{novo_id}'",
+                        )
+            finish_action("btn_salvar_minha_pasta_drive")
+            st.rerun()
+
+        if st.session_state.get("erro_minha_pasta_raiz_drive"):
+            st.error(
+                "Não foi possível confirmar acesso a essa pasta, então ela NÃO foi salva: "
+                + st.session_state["erro_minha_pasta_raiz_drive"]
+            )
+
+    if not pasta_raiz_id:
+        st.info("Configure a sua pasta acima para liberar a navegação de arquivos.")
+        return
+
+    # A pilha de navegação (pasta raiz -> subpasta -> subpasta...) é
+    # reiniciada automaticamente se a pasta raiz configurada por este
+    # usuário mudou desde a última vez (ex.: ele trocou pra outra pasta) -
+    # sem isso, quem já tinha navegado numa subpasta da pasta raiz ANTIGA
+    # continuaria "preso" lá, sem nenhuma pista de que a raiz mudou.
+    pilha = st.session_state.get("drive_pilha_pastas") or []
+    if not pilha or pilha[0]["id"] != pasta_raiz_id:
+        resetar_selecao_google_drive()
+        pilha = [{"id": pasta_raiz_id, "nome": "📁 Minha pasta"}]
+        st.session_state["drive_pilha_pastas"] = pilha
+
+    pasta_atual = pilha[-1]
+
+    st.markdown(f"**Local atual:** {' / '.join(item['nome'] for item in pilha)}")
+
+    col_voltar, col_atualizar, _col_espaco = st.columns([1, 1.4, 2])
+    with col_voltar:
+        if len(pilha) > 1 and st.button("⬅️ Voltar", key="drive_btn_voltar", use_container_width=True):
+            pilha.pop()
+            st.session_state["drive_pilha_pastas"] = pilha
+            st.session_state["drive_conteudo_cache"] = None
+            st.rerun()
+    with col_atualizar:
+        # Cobre o cenário descrito no pedido original: a pasta do Drive pode
+        # ganhar/perder arquivos a qualquer momento por fora do app - este
+        # botão força reconsultar a pasta atual em vez de confiar só no que
+        # já estava em cache desde a última navegação.
+        if st.button("🔄 Atualizar lista desta pasta", key="drive_btn_atualizar", use_container_width=True):
+            st.session_state["drive_conteudo_cache"] = None
+
+    conteudo = st.session_state.get("drive_conteudo_cache")
+    if conteudo is None:
+        with loading_overlay("Consultando a pasta no Google Drive, aguarde..."):
+            try:
+                conteudo = listar_pastas_e_arquivos_csv(pasta_atual["id"])
+                st.session_state["drive_conteudo_cache"] = conteudo
+                st.session_state["erro_carga"] = None
+            except GoogleDriveError as erro:
+                st.session_state["erro_carga"] = str(erro)
+                registrar_log(
+                    TIPO_ERRO, AuthManager.current_username(),
+                    f"Falha ao consultar pasta do Google Drive ('{pasta_atual['nome']}'): {erro}",
+                )
+                return
+
+    if conteudo.subpastas:
+        col_sub, col_entrar = st.columns([3, 1])
+        with col_sub:
+            subpasta_escolhida_nome = st.selectbox(
+                "Subpastas nesta pasta",
+                [item["nome"] for item in conteudo.subpastas],
+                key="drive_subpasta_escolhida",
+            )
+        with col_entrar:
+            st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+            if st.button("Entrar →", key="drive_btn_entrar", use_container_width=True):
+                subpasta_escolhida = next(
+                    item for item in conteudo.subpastas if item["nome"] == subpasta_escolhida_nome
+                )
+                pilha.append(subpasta_escolhida)
+                st.session_state["drive_pilha_pastas"] = pilha
+                st.session_state["drive_conteudo_cache"] = None
+                st.rerun()
+    else:
+        st.caption("Esta pasta não tem subpastas.")
+
+    st.divider()
+
+    if not conteudo.arquivos_csv:
+        st.info("Nenhum arquivo .csv encontrado nesta pasta.")
+        return
+
+    arquivo_escolhido_nome = st.selectbox(
+        "Arquivo .csv nesta pasta",
+        [item["nome"] for item in conteudo.arquivos_csv],
+        key="drive_arquivo_escolhido",
+    )
+
+    importar = action_button(
+        "Importar arquivo selecionado",
+        key="btn_importar_drive",
+        help="Baixa o arquivo escolhido do Google Drive e processa igual a um envio manual.",
+    )
+
+    if importar:
+        arquivo = next(
+            item for item in conteudo.arquivos_csv if item["nome"] == arquivo_escolhido_nome
+        )
+        with loading_overlay("Baixando e processando o arquivo, aguarde..."):
+            try:
+                resetar_dados_importados()
+                st.session_state[CHAVE_CAMPOS_PERSONALIZADOS] = []
+                conteudo_bytes = baixar_arquivo_csv(arquivo["id"])
+                resultado = carregar_arquivo(io.BytesIO(conteudo_bytes), arquivo["nome"])
+                mapeamento = detectar_mapeamento(resultado.dataframe)
+
+                st.session_state["resultado_carga"] = resultado
+                st.session_state["dataframe_bruto"] = resultado.dataframe
+                st.session_state["mapeamento_colunas"] = mapeamento
+                st.session_state["mapeamento_confirmado"] = False
+
+                time.sleep(0.3)
+            except (GoogleDriveError, DataLoadError) as erro:
+                st.session_state["erro_carga"] = str(erro)
+                registrar_log(
+                    TIPO_ERRO, AuthManager.current_username(),
+                    f"Falha ao importar '{arquivo['nome']}' do Google Drive: {erro}",
+                )
+            else:
+                st.session_state["erro_carga"] = None
+                caminho_pasta = " / ".join(item["nome"] for item in pilha)
+                registrar_log(
+                    TIPO_PAINEL, AuthManager.current_username(),
+                    f"Importou arquivo '{arquivo['nome']}' do Google Drive · "
+                    f"Pasta: {caminho_pasta} · {len(resultado.dataframe)} linhas",
+                )
+        finish_action("btn_importar_drive")
         st.rerun()
 
 

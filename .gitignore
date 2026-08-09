@@ -23,6 +23,12 @@ __pycache__/
 auth/users.yaml
 *.pat
 
+# Credencial da conta de serviço do Google Drive (busca de arquivo .csv em
+# Importar Dados) - baixada do Google Cloud Console, usada só como fallback
+# local (em produção a credencial vive nos Secrets do Streamlit Cloud, igual
+# ao cookie acima) - ver "Configurar Google Drive.md".
+core/google_drive_credentials.json
+
 # Arquivos de sistema
 .DS_Store
 Thumbs.db

@@ -8,6 +8,8 @@ import streamlit as st
 
 from auth.auth_manager import AuthManager
 from core.fuso_horario import formatar_data_hora_brasil
+from core.google_drive_client import GoogleDriveError, email_conta_servico
+from core.google_drive_client import testar_conexao as testar_conexao_drive
 from core.logs_sistema import (
     ROTULOS_TIPO_LOG,
     TIPO_ERRO,
@@ -88,17 +90,25 @@ def render_admin_page() -> None:
             else:
                 st.success("Conexão com o banco de dados funcionando normalmente.")
 
-    # Duas áreas dentro do mesmo menu "Administração", em abas em vez de uma
+    # Três áreas dentro do mesmo menu "Administração", em abas em vez de uma
     # embaixo da outra na mesma rolagem - "Solicitações de Acesso" (criação/
-    # revogação de conta) e "Logs do Sistema" (auditoria/erros/acessos) usam o
-    # mesmo banco (Turso) mas são assuntos distintos no dia a dia.
-    aba_solicitacoes, aba_logs = st.tabs(["📋 Solicitações de Acesso", "🗒️ Logs do Sistema"])
+    # revogação de conta), "Logs do Sistema" (auditoria/erros/acessos) e
+    # "Google Drive" (configuração da conta de serviço/pasta usada na busca
+    # automática de arquivo, ver ui/pages/upload_page.py) são assuntos
+    # distintos no dia a dia, mesmo as duas primeiras usando o mesmo banco
+    # (Turso).
+    aba_solicitacoes, aba_logs, aba_drive = st.tabs(
+        ["📋 Solicitações de Acesso", "🗒️ Logs do Sistema", "📁 Google Drive"]
+    )
 
     with aba_solicitacoes:
         _renderizar_secao_solicitacoes()
 
     with aba_logs:
         _renderizar_secao_logs()
+
+    with aba_drive:
+        _renderizar_secao_google_drive()
 
 
 def _renderizar_secao_solicitacoes() -> None:
@@ -559,3 +569,58 @@ def _renderizar_cartao_solicitacao(
                             "histórico aqui no painel.",
                             excluir=True,
                         )
+
+
+def _renderizar_secao_google_drive() -> None:
+    """
+    Diagnóstico da conta de serviço usada na busca de arquivo no Google
+    Drive (ver `ui/pages/upload_page.py` → opção "Buscar arquivo no Google
+    Drive"): mostra se a credencial está configurada (e o e-mail dela, pra
+    referência), e permite testar a conexão com a API do Google.
+
+    De propósito, NÃO existe mais aqui uma "pasta raiz" única/global pra
+    configurar - cada usuário logado escolhe e guarda a PRÓPRIA pasta,
+    direto na tela de Importar Dados (ver `core/config_app.py` →
+    `chave_pasta_raiz_google_drive`). Isso evita que todo mundo dependa do
+    administrador pra trocar de pasta, e evita que uma pessoa enxergue a
+    pasta compartilhada por outra sem querer - aqui em Administração fica
+    só o que é de fato administrativo: a CREDENCIAL da conta de serviço em
+    si (que segue nos Secrets do Streamlit / arquivo local, nunca colada
+    pela tela do app) e um jeito rápido de confirmar que ela está
+    funcionando.
+    """
+    st.caption(
+        "Diagnóstico da conta de serviço usada pela busca de arquivo no Google Drive (tela "
+        "Importar Dados). Cada usuário configura a própria pasta diretamente por lá - aqui só "
+        "dá pra conferir se a credencial da conta de serviço está funcionando."
+    )
+
+    email_servico = email_conta_servico()
+    if email_servico:
+        st.success(f"Conta de serviço configurada: `{email_servico}`")
+        st.caption(
+            "É esse o e-mail que cada usuário precisa compartilhar (permissão de Leitor) com a "
+            "própria pasta do Drive, na tela Importar Dados → \"Buscar arquivo no Google Drive\"."
+        )
+    else:
+        st.warning(
+            "Nenhuma conta de serviço do Google Drive configurada ainda. Configure a seção "
+            "[google_drive] nos Secrets do Streamlit (produção) ou o arquivo "
+            "core/google_drive_credentials.json (local) - veja o guia de configuração entregue "
+            "junto com este recurso."
+        )
+        return
+
+    if action_button("Testar conexão", key="btn_testar_conexao_drive"):
+        with loading_overlay("Testando conexão, aguarde..."):
+            try:
+                testar_conexao_drive()
+            except GoogleDriveError as erro:
+                erro_teste = erro
+            else:
+                erro_teste = None
+        finish_action("btn_testar_conexao_drive")
+        if erro_teste:
+            st.error(str(erro_teste))
+        else:
+            st.success("Credencial da conta de serviço válida - a API do Google Drive respondeu normalmente.")

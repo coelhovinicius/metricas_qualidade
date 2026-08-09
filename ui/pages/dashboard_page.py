@@ -15,6 +15,7 @@ from core.column_mapper import MapeamentoColunas
 from core.fuso_horario import agora_brasilia
 from ui.components import action_button, finish_action, loading_overlay, render_header, render_kpi_row
 from ui.theme import (
+    BACKGROUND_COLOR,
     PALETA_BUGS_TEMPO,
     PALETA_COLORIDA,
     PALETA_GRAFICOS,
@@ -73,7 +74,7 @@ def _aplicar_filtros_sidebar(
     df_filtrado = df
 
     # ---- Período: fica entre a navegação (radio) e a seção de Filtros ----
-    coluna_data = mapeamento.coluna_data_principal()
+    coluna_data = mapeamento.coluna_data_principal(df)
     if coluna_data and coluna_data in df.columns:
         datas_validas = pd.to_datetime(df[coluna_data], errors="coerce").dropna()
         if not datas_validas.empty:
@@ -254,13 +255,24 @@ def _construir_grafico_bolha_backlog(df_grupo: pd.DataFrame, coluna_rotulo: str)
         eixo Y = "Quantidade" de itens em aberto do grupo (reforçado pelo
             TAMANHO da bolha, pro mesmo valor "pular aos olhos" duas vezes);
         cor da bolha = "% Severidade Alta/Crítica" - canal SEQUENCIAL (um
-            matiz só, do branco ao vermelho), NUNCA uma cor por grupo:
-            com muitos Area Paths/Responsáveis, uma paleta categórica
-            deixaria rapidamente de diferenciar as bolhas (é exatamente o
-            motivo de mapas de bolha usarem, no máximo, ~3 cores
-            categóricas antes de precisar de outro canal) - aqui a cor
-            conta a história de RISCO, não de identidade de quem é o
-            grupo (isso já está no rótulo, visível ao passar o mouse).
+            matiz só, claro→escuro), NUNCA uma cor por grupo: com muitos
+            Area Paths/Responsáveis, uma paleta categórica deixaria
+            rapidamente de diferenciar as bolhas (é exatamente o motivo de
+            mapas de bolha usarem, no máximo, ~3 cores categóricas antes de
+            precisar de outro canal) - aqui a cor conta a história de
+            RISCO, não de identidade de quem é o grupo (isso já está no
+            rótulo, visível ao passar o mouse).
+
+            A ponta clara da escala é "#E97F78" (um rosa/vermelho já visível
+            por si só), NÃO branco puro: como o fundo do app é um creme
+            claro (`BACKGROUND_COLOR`, quase tão claro quanto branco), uma
+            bolha branca-no-branco ficava praticamente invisível pra
+            qualquer grupo com pouca (ou nenhuma) severidade alta/crítica -
+            justamente os casos mais comuns num backlog saudável. A ponta
+            escura ("#E63946") é a MESMA cor já usada em todo o resto do
+            app pra Severidade "Critical" (`ui/theme.py::_VERMELHO_CRITICIDADE`),
+            então uma bolha bem vermelha aqui lê como "risco alto" com o
+            mesmo significado de cor que o resto do dashboard já ensinou.
 
     O quadrante mais preocupante é bolha grande, mais à direita (parada há
     mais tempo) e mais vermelha (mais itens Critical/High) ao mesmo tempo.
@@ -271,13 +283,18 @@ def _construir_grafico_bolha_backlog(df_grupo: pd.DataFrame, coluna_rotulo: str)
         y="Quantidade",
         size="Quantidade",
         color="% Severidade Alta/Crítica",
-        color_continuous_scale=[[0.0, "#FFFFFF"], [1.0, "#D32F2F"]],
+        color_continuous_scale=[[0.0, "#E97F78"], [1.0, "#E63946"]],
         range_color=[0, 100],
         hover_name=coluna_rotulo,
         size_max=46,
         labels={"% Severidade Alta/Crítica": "% Alta/Crítica"},
     )
-    fig.update_traces(marker=dict(line=dict(width=2, color="#FFFFFF"), sizemin=8))
+    # A borda da bolha usa a cor de FUNDO do app (creme), não branco puro -
+    # é o "anel de superfície" que separa bolhas sobrepostas (ver dataviz
+    # skill: "surface ring"), e só funciona como separador visual se for a
+    # cor de superfície de verdade; com o fundo creme deste app, um anel
+    # branco destoava ligeiramente e ainda deixava a leitura mais difícil.
+    fig.update_traces(marker=dict(line=dict(width=2, color=BACKGROUND_COLOR), sizemin=8))
     fig.update_layout(coloraxis_colorbar=dict(title="% Alta/<br>Crítica", ticksuffix="%"))
     return fig
 
@@ -531,6 +548,14 @@ def _plotar(
             "mais abaixo e escolha uma coluna em \"Agrupar por\"."
         )
 
+    if tipo == "Pareto":
+        st.caption(
+            "💡 As barras mostram o valor de cada categoria, da maior para a menor; a linha "
+            "é o percentual acumulado (soma das barras até ali, de 0% a 100%) - a linha "
+            "pontilhada em 80% ajuda a ver quais poucas categorias já respondem pela maior "
+            "parte do total (a regra 80/20)."
+        )
+
     if secoes_pdf is not None:
         secoes_pdf.append({"titulo": titulo or chave, "fig": fig})
 
@@ -593,15 +618,21 @@ class _FilaGraficos:
             self._pendente = None
 
 
-def _explicacao(texto: str, rotulo: str = "ℹ️ Sobre este indicador") -> None:
+def _explicacao(texto: str, rotulo: str = "ℹ️ Sobre este indicador", expanded: bool = False) -> None:
     """
     Mostra um texto explicativo dentro de um expansor RECOLHIDO por padrão,
     em vez de um `st.caption` sempre visível - pedido explícito: os textos
     de explicação de cada gráfico (metodologia, o que entra/não entra no
     cálculo etc.) são longos e atrapalhavam a visualização dos gráficos;
     agora ficam escondidos até o usuário optar por abrir.
+
+    `expanded=True`: exceção pontual para os gráficos mais densos do painel
+    (ex.: o de bolha "Volume × Idade × Risco", que cruza 4 dimensões ao
+    mesmo tempo e não tem um tipo de gráfico mais simples como alternativa)
+    - nesses casos, a explicação já vem aberta, pra quem não é de TI não
+    precisar saber que existe um "ℹ️" pra clicar antes de entender os eixos.
     """
-    with st.expander(rotulo, expanded=False):
+    with st.expander(rotulo, expanded=expanded):
         st.caption(texto)
 
 
@@ -781,7 +812,8 @@ def render_dashboard_page() -> None:
                 "vermelha, maior o percentual de itens Severidade Alta/Crítica naquele grupo - "
                 "sem Severidade mapeada, todas as bolhas ficam brancas (0%). O quadrante mais "
                 "preocupante é bolha grande, mais à direita e mais vermelha ao mesmo tempo: "
-                "muito item, parado há muito tempo, e muito crítico."
+                "muito item, parado há muito tempo, e muito crítico.",
+                expanded=True,
             )
             col_agrupar_bolha, _col_espaco_bolha = st.columns([1, 3])
             with col_agrupar_bolha:

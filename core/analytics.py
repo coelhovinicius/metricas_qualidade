@@ -410,7 +410,7 @@ def distribuicao_tipo_teste(
 
 
 def tendencia_temporal(df: pd.DataFrame, mapeamento: MapeamentoColunas) -> Optional[pd.DataFrame]:
-    coluna_data = mapeamento.coluna_data_principal()
+    coluna_data = mapeamento.coluna_data_principal(df)
     if not coluna_data or coluna_data not in df.columns:
         return None
 
@@ -456,7 +456,7 @@ def tendencia_temporal_por_projeto(df: pd.DataFrame, mapeamento: MapeamentoColun
     """
     if not mapeamento.projeto or mapeamento.projeto not in df.columns:
         return None
-    coluna_data = mapeamento.coluna_data_principal()
+    coluna_data = mapeamento.coluna_data_principal(df)
     if not coluna_data or coluna_data not in df.columns:
         return None
 
@@ -557,7 +557,7 @@ def volume_responsavel_por_semana(
     "Quantidade"], ou é None se faltar a coluna de data principal ou a de
     Responsável nos dados.
     """
-    coluna_data = mapeamento.coluna_data_principal()
+    coluna_data = mapeamento.coluna_data_principal(df)
     if not coluna_data or coluna_data not in df.columns:
         return None, False
     if not mapeamento.responsavel or mapeamento.responsavel not in df.columns:
@@ -673,7 +673,7 @@ def backlog_aberto_por_grupo(
     Devolve `None` sem Data principal mapeada, sem `coluna_grupo` presente
     nos dados, ou sem nenhum item em aberto com data válida.
     """
-    coluna_data = mapeamento.coluna_data_principal()
+    coluna_data = mapeamento.coluna_data_principal(df)
     if not coluna_data or coluna_data not in df.columns:
         return None
     if not coluna_grupo or coluna_grupo not in df.columns:
@@ -1028,7 +1028,7 @@ def calcular_backlog_aberto(
     df: pd.DataFrame, mapeamento: MapeamentoColunas
 ) -> Optional[IndicadoresBacklogAberto]:
     """Estatísticas de idade (em dias, a partir da coluna de data principal) dos itens ainda em aberto."""
-    coluna_data = mapeamento.coluna_data_principal()
+    coluna_data = mapeamento.coluna_data_principal(df)
     if not coluna_data or coluna_data not in df.columns:
         return None
 
@@ -1059,7 +1059,7 @@ def ranking_itens_mais_antigos_abertos(
     df: pd.DataFrame, mapeamento: MapeamentoColunas, top_n: int = 15
 ) -> Optional[pd.DataFrame]:
     """Tabela com os itens em aberto há mais tempo, do mais antigo para o mais recente."""
-    coluna_data = mapeamento.coluna_data_principal()
+    coluna_data = mapeamento.coluna_data_principal(df)
     if not coluna_data or coluna_data not in df.columns:
         return None
 
@@ -1123,7 +1123,7 @@ def itens_concluidos_por_sprint(
     """
     if not mapeamento.sprint or mapeamento.sprint not in df.columns:
         return None
-    coluna_data = mapeamento.coluna_data_principal()
+    coluna_data = mapeamento.coluna_data_principal(df)
     if not coluna_data or coluna_data not in df.columns:
         return None
 
@@ -1406,7 +1406,7 @@ def bugs_abertos_vs_solucionados(
     Requer tipo_teste mapeado (pra isolar os itens de bug) e status mapeado
     (pra saber o que é terminal); sem os dois, retorna None.
     """
-    coluna_data = mapeamento.coluna_data_principal()
+    coluna_data = mapeamento.coluna_data_principal(df)
     if not coluna_data or coluna_data not in df.columns:
         return None
     if not mapeamento.tipo_teste or mapeamento.tipo_teste not in df.columns:

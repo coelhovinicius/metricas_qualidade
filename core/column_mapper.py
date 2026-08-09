@@ -217,9 +217,58 @@ class MapeamentoColunas:
             "prioridade_board": self.prioridade_board,
         }
 
-    def coluna_data_principal(self) -> Optional[str]:
-        """Coluna de data usada por padrão em filtros de período e tendência temporal."""
-        return self.data_execucao or self.data_criacao or self.data_planejada
+    def coluna_data_principal(self, df: Optional[pd.DataFrame] = None) -> Optional[str]:
+        """
+        Coluna de data usada por padrão em filtros de período e tendência
+        temporal (ver `ui/pages/dashboard_page.py` → filtro "Período" na
+        barra lateral, e várias funções de `core/analytics.py`).
+
+        Ordem de preferência: Data de Execução → Data de Criação → Data
+        Planejada. MAS, quando `df` é informado, pula qualquer candidata
+        preenchida em menos de 10% das linhas do arquivo, indo para a
+        próxima da lista - é comum, em exportações reais do Azure DevOps,
+        "Data de Execução"/"Data Real de Conclusão" só vir preenchida para
+        itens já concluídos, ficando vazia para tudo que ainda está em
+        aberto (a maioria, na prática). Sem essa checagem, essa seria
+        sempre a coluna escolhida (por vir primeiro na ordem de
+        preferência) e o filtro de período - que REMOVE do dashboard
+        qualquer linha sem uma data válida nessa coluna, ver
+        `core.analytics.filtrar_por_intervalo_datas` - acabaria escondendo
+        quase o arquivo inteiro (tudo em aberto) sem nenhum aviso, dando a
+        falsa impressão de que os dados mais antigos "sumiram" na
+        importação. Sem `df` informado, mantém o comportamento antigo (só
+        a ordem de preferência, sem checar preenchimento) - usado nos
+        poucos lugares em que o dataframe ainda não está disponível.
+        """
+        candidatos = [self.data_execucao, self.data_criacao, self.data_planejada]
+        if df is None:
+            return next((coluna for coluna in candidatos if coluna), None)
+
+        limiar_minimo_preenchimento = 0.10
+        total_linhas = len(df)
+        primeiro_candidato_valido: Optional[str] = None
+        for coluna in candidatos:
+            if not coluna or coluna not in df.columns:
+                continue
+            if primeiro_candidato_valido is None:
+                primeiro_candidato_valido = coluna
+            if total_linhas == 0:
+                continue
+            # dayfirst=True: mesma convenção usada em `core.analytics.preparar_dados`
+            # pra colunas de data (formato brasileiro DD/MM/AAAA nos exports do
+            # Azure DevOps) - sem isso, datas como "14/02/2024" falhariam o parse
+            # (mês 14 não existe) e o preenchimento seria subestimado. Na prática,
+            # quando esta função já roda depois de `preparar_dados` (fluxo normal
+            # do dashboard), a coluna já vem como `datetime.date` de verdade e este
+            # parâmetro não faz diferença nenhuma - ele só protege o caso de
+            # alguém chamar esta função com um dataframe ainda "cru".
+            preenchimento = pd.to_datetime(df[coluna], errors="coerce", dayfirst=True).notna().mean()
+            if preenchimento >= limiar_minimo_preenchimento:
+                return coluna
+        # Nenhuma candidata bateu o limiar (arquivo com todas as colunas de
+        # data muito esparsas) - melhor devolver a primeira válida do que
+        # nada, senão o dashboard perderia o filtro de período por completo.
+        return primeiro_candidato_valido
 
 
 def detectar_mapeamento(df: pd.DataFrame) -> MapeamentoColunas:

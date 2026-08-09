@@ -132,11 +132,14 @@ def _sec_visao_geral() -> None:
         ("📄 Enviar arquivo (.csv/.txt)", [
             ("A", "Selecionar o arquivo e clicar em \"Processar arquivo\"", ""),
         ]),
-        ("☁️ Buscar automaticamente do Azure DevOps", [
+        ("☁️ Buscar Query no Azure DevOps", [
             ("B", "PAT → Organização → Projeto → Query → \"Baixar relatório atualizado\"", ""),
         ]),
+        ("📁 Buscar arquivo no Google Drive", [
+            ("C", "Navegar até a pasta/subpasta → escolher o .csv → \"Importar arquivo selecionado\"", ""),
+        ]),
     ])
-    _seta("os dois caminhos se encontram aqui")
+    _seta("os três caminhos se encontram aqui")
     _passo("2", "Confirmar o Mapeamento de Colunas", "Revisa (ou ajusta) o que o app já sugeriu sozinho.")
     _seta()
     _passo("3", "Explorar o Painel de Indicadores", "Filtros + mais de 20 gráficos + gráfico personalizado.")
@@ -189,7 +192,7 @@ def _sec_importacao() -> None:
             ("1", "Escolher o arquivo", "Limite de 20MB."),
             ("2", "Clicar em \"Processar arquivo\"", "Codificação e separador são detectados sozinhos."),
         ]),
-        ("☁️ Buscar automaticamente do Azure DevOps", [
+        ("☁️ Buscar Query no Azure DevOps", [
             ("1", "Colar o PAT", "Fica só na memória da sessão do navegador - nunca é salvo em disco."),
             ("2", "Escolher/Carregar a Organização", ""),
             ("3", "Escolher o Projeto", "Area Path(s) do board é opcional, mais abaixo."),
@@ -197,8 +200,14 @@ def _sec_importacao() -> None:
             ("5", "Escolher a Query salva", "Ou criar uma nova, direto no Azure DevOps, pelo link fornecido."),
             ("6", "Clicar em \"Baixar relatório atualizado\"", ""),
         ]),
+        ("📁 Buscar arquivo no Google Drive", [
+            ("1", "Compartilhar a sua pasta no Drive", "Com o e-mail da conta de serviço, mostrado na própria tela."),
+            ("2", "Colar o link/ID dessa pasta e salvar", "Uma vez só - fica guardado pra você, ninguém mais precisa mexer."),
+            ("3", "Navegar até a pasta/subpasta e escolher o .csv", "Só arquivos .csv aparecem na lista."),
+            ("4", "Clicar em \"Importar arquivo selecionado\"", "Baixa o arquivo do Drive e processa igual a um envio manual."),
+        ]),
     ])
-    _seta("os dois caminhos se encontram aqui")
+    _seta("os três caminhos se encontram aqui")
     _passo("✓", "Segue para a confirmação do Mapeamento de Colunas")
 
     st.markdown("<br>", unsafe_allow_html=True)
@@ -209,8 +218,17 @@ def _sec_importacao() -> None:
         "Administração → Logs do Sistema é marcado com \"POSSÍVEL ANOMALIA\" - não bloqueia nada, é só "
         "um alerta visual pro administrador conferir depois."
     )
+    _callout(
+        "📁 <strong>Google Drive.</strong> Cada pessoa configura a PRÓPRIA pasta, direto na tela "
+        "Importar Dados - não existe uma pasta única compartilhada por todo mundo, nem depende do "
+        "administrador pra trocar. O administrador só é responsável por configurar a conta de "
+        "serviço em si (ver \"Administração\" abaixo); a busca só fica disponível depois disso. O "
+        "conteúdo da sua pasta pode mudar a qualquer momento por fora do app (novo arquivo, arquivo "
+        "apagado etc.); use \"🔄 Atualizar lista desta pasta\" pra reconsultar sem precisar sair e "
+        "voltar na tela."
+    )
     st.caption(
-        "Nos dois caminhos, importar um arquivo/relatório novo sempre SUBSTITUI o anterior - não "
+        "Nos três caminhos, importar um arquivo/relatório novo sempre SUBSTITUI o anterior - não "
         "acumula dados de importações diferentes."
     )
 
@@ -270,7 +288,7 @@ def _sec_catalogo_graficos() -> None:
 
 
 def _sec_administracao() -> None:
-    st.caption("Visível só para quem faz login como usuário `admin`. Tem duas partes:")
+    st.caption("Visível só para quem faz login como usuário `admin`. Tem três partes (uma aba para cada):")
 
     st.markdown("**1. Ciclo de vida de uma solicitação de conta**")
     st.markdown(
@@ -306,6 +324,19 @@ def _sec_administracao() -> None:
     ])
     st.caption("Cada tipo de log tem seletor de quantidade, botão de atualizar, e opção de limpar entradas antigas por número de dias.")
 
+    st.markdown("<br>**3. Google Drive**", unsafe_allow_html=True)
+    st.markdown(
+        "Diagnóstico da conta de serviço usada na busca de arquivo no Google Drive (ver "
+        "\"Importação de dados\" acima) - mostra o e-mail dela e um botão \"Testar conexão\". Não "
+        "existe mais uma pasta única configurada por aqui: cada usuário guarda a PRÓPRIA pasta "
+        "direto na tela Importar Dados, sem depender do administrador para trocar."
+    )
+    _callout(
+        "A credencial da conta de serviço (a chave sensível) NÃO é configurada por aqui - fica só "
+        "nos Secrets do Streamlit (produção) ou num arquivo local, nunca colada/enviada pela tela "
+        "do app, pelo mesmo motivo de nenhuma senha/PAT ser guardado em disco neste sistema."
+    )
+
 
 # ---------------------------------------------------------------------------
 # Entrada da página
@@ -326,7 +357,7 @@ def render_sobre_page() -> None:
     with st.expander("🔐 Login, acesso e solicitação de conta"):
         _sec_login()
 
-    with st.expander("📥 Importação de dados — os dois caminhos"):
+    with st.expander("📥 Importação de dados — os três caminhos"):
         _sec_importacao()
 
     with st.expander("🗂️ Confirmar o mapeamento de colunas"):
