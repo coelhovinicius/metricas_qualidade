@@ -2,12 +2,21 @@
 
 from __future__ import annotations
 
+import base64
 from typing import Optional
 
 import streamlit as st
 
 from auth.auth_manager import AuthManager
+from core.config_app import (
+    CHAVE_GUIA_PDF_BASE64,
+    CHAVE_GUIA_PDF_HASH,
+    definir_configuracao,
+    obter_configuracao,
+    obter_configuracao_com_data,
+)
 from core.fuso_horario import formatar_data_hora_brasil
+from core.gerador_guia_pdf import gerar_pdf_bytes, hash_conteudo_atual
 from core.google_drive_client import GoogleDriveError, email_conta_servico
 from core.google_drive_client import testar_conexao as testar_conexao_drive
 from core.logs_sistema import (
@@ -90,15 +99,16 @@ def render_admin_page() -> None:
             else:
                 st.success("Conexão com o banco de dados funcionando normalmente.")
 
-    # Três áreas dentro do mesmo menu "Administração", em abas em vez de uma
+    # Quatro áreas dentro do mesmo menu "Administração", em abas em vez de uma
     # embaixo da outra na mesma rolagem - "Solicitações de Acesso" (criação/
-    # revogação de conta), "Logs do Sistema" (auditoria/erros/acessos) e
+    # revogação de conta), "Logs do Sistema" (auditoria/erros/acessos),
     # "Google Drive" (configuração da conta de serviço/pasta usada na busca
-    # automática de arquivo, ver ui/pages/upload_page.py) são assuntos
-    # distintos no dia a dia, mesmo as duas primeiras usando o mesmo banco
-    # (Turso).
-    aba_solicitacoes, aba_logs, aba_drive = st.tabs(
-        ["📋 Solicitações de Acesso", "🗒️ Logs do Sistema", "📁 Google Drive"]
+    # automática de arquivo, ver ui/pages/upload_page.py) e "Guia do Usuário"
+    # (regerar o PDF de "Sobre o App" sem precisar de terminal/VSCode, ver
+    # `_renderizar_secao_guia_pdf`) são assuntos distintos no dia a dia,
+    # mesmo as duas primeiras usando o mesmo banco (Turso).
+    aba_solicitacoes, aba_logs, aba_drive, aba_guia = st.tabs(
+        ["📋 Solicitações de Acesso", "🗒️ Logs do Sistema", "📁 Google Drive", "📘 Guia do Usuário"]
     )
 
     with aba_solicitacoes:
@@ -109,6 +119,9 @@ def render_admin_page() -> None:
 
     with aba_drive:
         _renderizar_secao_google_drive()
+
+    with aba_guia:
+        _renderizar_secao_guia_pdf()
 
 
 def _renderizar_secao_solicitacoes() -> None:
@@ -596,13 +609,7 @@ def _renderizar_secao_google_drive() -> None:
     )
 
     email_servico = email_conta_servico()
-    if email_servico:
-        st.success(f"Conta de serviço configurada: `{email_servico}`")
-        st.caption(
-            "É esse o e-mail que cada usuário precisa compartilhar (permissão de Leitor) com a "
-            "própria pasta do Drive, na tela Importar Dados → \"Buscar arquivo no Google Drive\"."
-        )
-    else:
+    if not email_servico:
         st.warning(
             "Nenhuma conta de serviço do Google Drive configurada ainda. Configure a seção "
             "[google_drive] nos Secrets do Streamlit (produção) ou o arquivo "
@@ -611,16 +618,141 @@ def _renderizar_secao_google_drive() -> None:
         )
         return
 
-    if action_button("Testar conexão", key="btn_testar_conexao_drive"):
-        with loading_overlay("Testando conexão, aguarde..."):
-            try:
-                testar_conexao_drive()
-            except GoogleDriveError as erro:
-                erro_teste = erro
+    # Duas colunas lado a lado (empilha sozinho em uma coluna só no celular -
+    # comportamento nativo do `st.columns` do Streamlit, mesmo usado no
+    # emparelhamento de gráficos do dashboard, ver `_FilaGraficos` em
+    # `ui/pages/dashboard_page.py`): à esquerda o status da credencial já
+    # configurada, à direita a ação de testar a conexão. Só existem esses
+    # dois blocos aqui (não uma lista que se repete pra formar um "zigue-
+    # zague" de várias linhas de verdade), mas separar em duas colunas ainda
+    # evita um bloco fininho empilhado ocupando a largura toda da tela à toa.
+    col_status, col_teste = st.columns(2, gap="large")
+    with col_status:
+        st.success(f"Conta de serviço configurada: `{email_servico}`")
+        st.caption(
+            "É esse o e-mail que cada usuário precisa compartilhar (permissão de Leitor) com a "
+            "própria pasta do Drive, na tela Importar Dados → \"Buscar arquivo no Google Drive\"."
+        )
+    with col_teste:
+        if action_button("Testar conexão", key="btn_testar_conexao_drive"):
+            with loading_overlay("Testando conexão, aguarde..."):
+                try:
+                    testar_conexao_drive()
+                except GoogleDriveError as erro:
+                    erro_teste = erro
+                else:
+                    erro_teste = None
+            finish_action("btn_testar_conexao_drive")
+            if erro_teste:
+                st.error(str(erro_teste))
             else:
-                erro_teste = None
-        finish_action("btn_testar_conexao_drive")
-        if erro_teste:
-            st.error(str(erro_teste))
+                st.success("Credencial da conta de serviço válida - a API do Google Drive respondeu normalmente.")
+
+
+def _renderizar_secao_guia_pdf() -> None:
+    """
+    Aba "📘 Guia do Usuário": recria o PDF "Guia Completo do Usuário" (ver
+    `core/gerador_guia_pdf.py`) direto pelo navegador, com um clique - sem
+    precisar abrir terminal nem VSCode. O resultado é gravado no banco de
+    dados (Turso, mesma tabela genérica de `core/config_app.py`) - é de lá
+    que a tela "Sobre o App" busca o PDF na hora de oferecer o download pra
+    qualquer usuário (ver `ui/pages/sobre_page.py::_obter_bytes_guia_pdf`).
+    Gravar no banco (e não só num arquivo em disco) é o que garante que o
+    PDF sobrevive a reinícios/redeploys no Streamlit Community Cloud, cujo
+    disco é temporário - clicar aqui uma vez basta; não depende de rodar
+    `scripts/gerar_guia_usuario_pdf.py` (esse script continua existindo só
+    como atalho pra quem quiser conferir o arquivo localmente).
+
+    De propósito, NÃO regenera sozinho (ver decisão do usuário: prefere um
+    botão manual) - em vez disso, mostra um aviso claro de "há alteração de
+    conteúdo pendente" comparando um HASH do código atual de
+    `_montar_story` (ver `core/gerador_guia_pdf.py::hash_conteudo_atual`)
+    com o hash salvo junto da última versão gerada. Só compara hashes (não
+    os PDFs em si) porque dois PDFs do MESMO conteúdo nunca são idênticos
+    byte a byte entre si - o reportlab embute a data/hora de criação em cada
+    geração.
+
+    As EXPLICAÇÕES e o FLUXOGRAMA do resto de "Sobre o App" não precisam de
+    nenhum botão/aviso parecido - são texto/HTML dentro do próprio código
+    Python, então já aparecem sempre atualizados sozinhos a cada
+    carregamento da página. Só este PDF (conteúdo estático, servido pronto)
+    precisa ser recriado manualmente de vez em quando.
+    """
+    st.caption(
+        "Recria o PDF \"Guia Completo do Usuário\" (o mesmo oferecido para download em "
+        "\"Sobre o App\") com o conteúdo mais atual, sem precisar rodar nada fora do "
+        "navegador."
+    )
+    st.caption(
+        "💡 As explicações e o fluxograma do restante de \"Sobre o App\" não precisam de nada "
+        "aqui - já são código, então aparecem sempre atualizados sozinhos a cada "
+        "carregamento da página."
+    )
+
+    try:
+        atual = obter_configuracao_com_data(CHAVE_GUIA_PDF_BASE64)
+        hash_salvo = obter_configuracao(CHAVE_GUIA_PDF_HASH)
+    except TursoError as erro:
+        st.error(str(erro))
+        atual = None
+        hash_salvo = None
+
+    hash_agora = hash_conteudo_atual()
+
+    if not atual:
+        st.info(
+            "Nenhuma versão gerada pelo app ainda - \"Sobre o App\" está servindo o PDF padrão "
+            "incluído no repositório. Clique no botão abaixo para gerar a primeira versão."
+        )
+    else:
+        _, atualizado_em = atual
+        data_formatada = formatar_data_hora_brasil(atualizado_em)
+        if hash_salvo == hash_agora:
+            st.success(
+                f"✅ Atualizado - sem alterações pendentes. Última geração: {data_formatada}."
+            )
         else:
-            st.success("Credencial da conta de serviço válida - a API do Google Drive respondeu normalmente.")
+            st.warning(
+                f"⚠️ Há alterações no conteúdo do guia (no código) que ainda não foram enviadas "
+                f"para o PDF - a última geração foi em {data_formatada}, com uma versão anterior "
+                f"do conteúdo. Clique no botão abaixo para atualizar o que os usuários recebem."
+            )
+
+    if action_button("🔄 Gerar/Atualizar PDF agora", key="btn_gerar_guia_pdf"):
+        with loading_overlay("Gerando o PDF, aguarde..."):
+            try:
+                pdf_bytes = gerar_pdf_bytes()
+                definir_configuracao(CHAVE_GUIA_PDF_BASE64, base64.b64encode(pdf_bytes).decode("ascii"))
+                definir_configuracao(CHAVE_GUIA_PDF_HASH, hash_agora)
+            except Exception as erro:  # reportlab e TursoError não compartilham uma base comum
+                erro_geracao: Optional[Exception] = erro
+            else:
+                erro_geracao = None
+                registrar_log(
+                    TIPO_PAINEL, AuthManager.current_username(),
+                    "Gerou/atualizou o PDF do Guia Completo do Usuário",
+                )
+        finish_action("btn_gerar_guia_pdf")
+        if erro_geracao:
+            st.error(f"Não foi possível gerar/salvar o PDF: {erro_geracao}")
+        else:
+            st.success(
+                "PDF gerado e salvo com sucesso - já disponível para download em \"Sobre o App\" "
+                "para qualquer usuário, imediatamente (não precisa recarregar nem esperar nada)."
+            )
+            st.download_button(
+                "⬇️ Baixar esta versão para manter o assets/ do repositório em dia (opcional)",
+                data=pdf_bytes,
+                file_name="Guia_do_Usuario_QA.pdf",
+                mime="application/pdf",
+                key="btn_baixar_guia_pdf_recem_gerado",
+            )
+            st.caption(
+                "💡 Esse download é BYTE A BYTE igual ao que acabou de ser salvo no banco de "
+                "dados (o que os usuários já estão recebendo) - baixe, substitua o arquivo em "
+                "`assets/Guia_do_Usuario_QA.pdf` no seu repositório local, e faça `git add` + "
+                "`git commit` + `git push`. Isso é só para manter o arquivo do repositório "
+                "arrumado/igual ao que está no ar (ex.: caso o banco de dados algum dia seja "
+                "resetado, o repositório já tem a versão certa como reserva) - os usuários já "
+                "estão recebendo a versão certa mesmo sem você fazer esse passo."
+            )

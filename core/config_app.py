@@ -32,6 +32,23 @@ CREATE TABLE IF NOT EXISTS {_TABELA} (
 
 _PREFIXO_CHAVE_GOOGLE_DRIVE_PASTA_RAIZ = "google_drive_pasta_raiz_id__"
 
+# Guarda o PDF inteiro do "Guia Completo do Usuário" (ver
+# `core/gerador_guia_pdf.py`), codificado em base64 num único valor TEXT -
+# gravado pelo botão "🔄 Gerar/Atualizar PDF agora" em Administração e lido
+# pela tela "Sobre o App" na hora de oferecer o download pra qualquer
+# usuário. É uma chave só (não por usuário, como a de cima): o guia é o
+# mesmo pra todo mundo. Guardar aqui (em vez de só em disco) é o que faz o
+# PDF sobreviver a reinícios/redeploys no Streamlit Community Cloud, cujo
+# disco é temporário.
+CHAVE_GUIA_PDF_BASE64 = "guia_usuario_pdf_base64"
+
+# Guarda a "impressão digital" (hash) do CONTEÚDO do guia usado na última vez
+# que o PDF acima foi gerado (ver `core/gerador_guia_pdf.py::
+# hash_conteudo_atual`). Comparando esse valor salvo com o hash do código
+# rodando AGORA, a Administração consegue avisar "há uma alteração no código
+# do guia ainda não gerada" sem precisar reabrir o PDF inteiro pra conferir.
+CHAVE_GUIA_PDF_HASH = "guia_usuario_pdf_hash"
+
 
 def chave_pasta_raiz_google_drive(nome_usuario: str) -> str:
     """
@@ -67,3 +84,18 @@ def definir_configuracao(chave: str, valor: str) -> None:
         """,
         [chave, valor],
     )
+
+
+def obter_configuracao_com_data(chave: str) -> Optional[tuple[str, str]]:
+    """
+    Como `obter_configuracao`, mas devolve também `atualizado_em` (data/hora
+    da última gravação, em UTC) - usado onde a tela precisa mostrar "gerado
+    em ..." (ex.: o botão de regenerar o Guia do Usuário em PDF, na aba
+    "📘 Guia do Usuário" de Administração). Devolve `None` se `chave` nunca
+    foi configurada.
+    """
+    _garantir_tabela()
+    linhas = executar(f"SELECT valor, atualizado_em FROM {_TABELA} WHERE chave = ?", [chave])
+    if not linhas:
+        return None
+    return linhas[0]["valor"], linhas[0]["atualizado_em"]

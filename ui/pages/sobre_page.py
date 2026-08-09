@@ -1,6 +1,6 @@
 """
 Página "Sobre o App": explica, de forma visual, todos os fluxos do
-Refuturiza QA - do login até o relatório em PDF, incluindo o que cada
+app - do login até o relatório em PDF, incluindo o que cada
 gráfico do painel mostra e como funciona a Administração.
 
 É só uma tela informativa (não lê nem grava nenhum dado do usuário) -
@@ -21,9 +21,49 @@ por cima.
 
 from __future__ import annotations
 
+import base64
+from pathlib import Path
+from typing import Optional
+
 import streamlit as st
 
+from core.config_app import CHAVE_GUIA_PDF_BASE64, obter_configuracao
 from ui.components import render_header
+
+# ui/pages/sobre_page.py -> ui/pages -> ui -> raiz do projeto -> assets/
+_ASSETS_DIR = Path(__file__).resolve().parent.parent.parent / "assets"
+# Nome só pra sugerir no download (`file_name=`) - o CONTEÚDO em si vem do
+# banco de dados (Turso) sempre que existir, ver `_obter_bytes_guia_pdf`;
+# este arquivo em disco é usado só como versão padrão/de fallback, incluída
+# no próprio repositório, para quando ainda ninguém clicou em "🔄 Gerar/
+# Atualizar PDF agora" em Administração neste ambiente.
+_CAMINHO_GUIA_PDF = _ASSETS_DIR / "Guia_do_Usuario_QA.pdf"
+
+
+def _obter_bytes_guia_pdf() -> Optional[bytes]:
+    """
+    Bytes do PDF do "Guia Completo do Usuário", prontos para
+    `st.download_button`. Prioridade: (1) versão gravada no banco de dados
+    (Turso) pelo botão de Administração - é a fonte "viva", que sobrevive a
+    reinícios/redeploys mesmo em hospedagem com disco temporário (Streamlit
+    Community Cloud); (2) se ainda não existir nenhuma lá (app recém-
+    publicado, ninguém clicou no botão ainda), cai para o arquivo padrão já
+    incluído no repositório. Qualquer falha ao falar com o banco (Turso não
+    configurado, fora do ar, etc.) é silenciosa aqui, com o mesmo fallback -
+    esta é só uma tela informativa, não deve quebrar por isso.
+    """
+    try:
+        base64_pdf = obter_configuracao(CHAVE_GUIA_PDF_BASE64)
+    except Exception:
+        base64_pdf = None
+    if base64_pdf:
+        try:
+            return base64.b64decode(base64_pdf)
+        except (ValueError, TypeError):
+            pass
+    if _CAMINHO_GUIA_PDF.exists():
+        return _CAMINHO_GUIA_PDF.read_bytes()
+    return None
 
 # ---------------------------------------------------------------------------
 # Componentes de diagrama (blocos HTML/CSS reutilizáveis - ver docstring do
@@ -150,6 +190,149 @@ def _sec_visao_geral() -> None:
         "⚙️ <strong>Administração</strong> roda à parte desse caminho principal - disponível a qualquer "
         "momento no menu lateral, só pra quem faz login como admin. Ver a seção retrátil "
         "\"Administração\" mais abaixo."
+    )
+
+
+def _sec_fluxograma_completo() -> None:
+    """
+    Fluxograma completo do app: diferente de `_sec_visao_geral` (só o
+    caminho principal de quem importa/analisa dados), aqui aparecem as DUAS
+    trilhas que rodam em paralelo - a de quem usa o app no dia a dia, e a de
+    quem administra (login `admin`) - e, principalmente, ONDE uma trilha
+    depende da outra. Antes desta seção, a Administração só aparecia como um
+    aviso solto no fim de `_sec_visao_geral`, sem mostrar que ela também tem
+    passos próprios nem que duas ações específicas dela (aprovar solicitação
+    de acesso, configurar a credencial do Google Drive) são pré-requisito
+    para passos da trilha comum - o "fluxograma completo" pedido é reunir as
+    duas coisas numa figura só, com essas dependências explícitas.
+    """
+    st.markdown("### Fluxograma completo do app")
+    st.caption(
+        "As duas trilhas rodam em paralelo, não uma depois da outra - a coluna da direita "
+        "(Administração) não tem uma 'ordem' fixa como a da esquerda, e fica disponível o tempo "
+        "todo pra quem loga como `admin`. Os avisos 🔗 abaixo mostram exatamente onde uma trilha "
+        "trava a outra."
+    )
+    _bifurcacao([
+        ("🙋 Trilha de quem usa o app", [
+            ("1", "Pedir acesso", "Só se ainda não tiver conta - formulário na tela de login."),
+            ("2", "Fazer login", "Usuário e senha, criados pelo admin fora do app (ver trilha ao lado)."),
+            ("3", "Importar dados", "Enviar arquivo, Azure DevOps, ou Google Drive - qualquer um dos três."),
+            ("4", "Confirmar mapeamento de colunas", "Revisa o que o app já sugeriu sozinho."),
+            ("5", "Explorar o Painel de Indicadores", "Filtros + mais de 20 gráficos + gráfico personalizado."),
+            ("✓", "Gerar PDF do Relatório", "Opcional, a qualquer momento a partir do painel."),
+        ]),
+        ("⚙️ Trilha de quem administra (login admin)", [
+            ("A", "Configurar a conta de serviço do Google Drive", "Uma vez só, em Administração → Google Drive - ver aviso 🔗 abaixo."),
+            ("B", "Aprovar ou rejeitar solicitações de acesso", "Fila de \"Pendentes\" em Administração → Solicitações de Acesso."),
+            ("C", "Revogar acesso (ou reverter depois)", "Quando alguém sai, ou por engano."),
+            ("D", "Acompanhar os Logs do Sistema", "Acessos, erros técnicos, e ações feitas no próprio painel."),
+        ]),
+    ])
+    st.markdown("<br>", unsafe_allow_html=True)
+    _callout(
+        "🔗 <strong>Login trava em \"B\".</strong> A pessoa só consegue fazer login (passo 2 da "
+        "trilha da esquerda) depois que o admin marca a solicitação como \"Criada\" - e cria de "
+        "verdade o usuário/senha fora do app (nos Secrets do Streamlit ou em <code>auth/users.yaml</code>)."
+    )
+    _callout(
+        "🔗 <strong>\"Buscar arquivo no Google Drive\" trava em \"A\".</strong> Sem o admin "
+        "configurar a credencial da conta de serviço (passo A), essa opção de importação (passo 3) "
+        "mostra um aviso e não deixa navegar - os outros dois caminhos (Enviar arquivo / Azure "
+        "DevOps) funcionam independente disso. Depois que a credencial existe, cada pessoa "
+        "configura a PRÓPRIA pasta sozinha (dentro do passo 3), sem precisar do admin de novo."
+    )
+    _callout(
+        "Os passos \"C\" e \"D\" da direita não travam nada da trilha da esquerda - são só "
+        "manutenção contínua, disponíveis o tempo todo, sem uma ordem obrigatória entre si nem em "
+        "relação ao que a pessoa comum está fazendo."
+    )
+
+
+def _sec_guia_para_baixar() -> None:
+    """
+    Área com o "Guia Completo do Usuário" - visível pra QUALQUER pessoa
+    logada (mesma regra do resto desta página), reunindo num só lugar tudo
+    que falta pra alguém novo se virar sozinho: como gerar um PAT do Azure
+    DevOps, e quais colunas configurar na query pra cada gráfico funcionar
+    (conteúdo que não cabia nos fluxogramas acima, mais operacionais do que
+    "como o app funciona"). O PDF (montado por
+    `core/gerador_guia_pdf.py`, regravável a qualquer momento pelo botão
+    "🔄 Gerar/Atualizar PDF agora" em Administração → "📘 Guia do Usuário") é
+    a versão completa, pronta pra baixar e repassar pra qualquer pessoa nova
+    - o conteúdo abaixo, em tela, é um resumo dos dois pontos que só existem
+    aqui (o resto do guia já está coberto pelas outras seções desta
+    página).
+    """
+    st.caption(
+        "Reúne tudo que uma pessoa nova precisa pra usar o app sozinha - inclusive gerar um "
+        "PAT do Azure DevOps e montar a query certa. Pode ser baixado em PDF pra repassar pra "
+        "qualquer usuário novo."
+    )
+
+    bytes_pdf = _obter_bytes_guia_pdf()
+    if bytes_pdf:
+        st.download_button(
+            "⬇️ Baixar Guia Completo do Usuário (PDF)",
+            data=bytes_pdf,
+            file_name=_CAMINHO_GUIA_PDF.name,
+            mime="application/pdf",
+            key="btn_baixar_guia_usuario_pdf",
+        )
+    else:
+        st.info(
+            "O PDF deste guia ainda não foi gerado neste ambiente - peça para a pessoa "
+            "administradora clicar em \"🔄 Gerar/Atualizar PDF agora\" (Administração → "
+            "\"📘 Guia do Usuário\"). O conteúdo abaixo já funciona normalmente, independente "
+            "do PDF."
+        )
+
+    st.markdown("<br>**Como gerar o seu PAT (Personal Access Token) do Azure DevOps**", unsafe_allow_html=True)
+    _passo("1", "Acesse dev.azure.com e faça login normalmente")
+    _seta()
+    _passo("2", "Ícone de usuário (canto superior direito)", "→ \"Personal Access Tokens\".")
+    _seta()
+    _passo("3", "Clique em \"+ New Token\"")
+    _seta()
+    _passo("4", "Dê um nome e escolha a validade", "Recomendado: 90 dias - depois é só gerar outro.")
+    _seta()
+    _passo("5", "Em Scopes, marque \"Work Items\" → \"Read\"", "Só leitura - o app nunca cria, edita ou apaga nada no Azure DevOps.")
+    _seta()
+    _passo("✓", "Clique em \"Create\" e copie o token na hora", "O Azure DevOps só mostra o valor completo uma vez.")
+    _callout(
+        "É seguro colar esse PAT no app: ele nunca é salvo em disco, banco de dados ou nas "
+        "configurações - fica só na memória da sua sessão do navegador enquanto você está "
+        "logado, e desaparece ao sair ou fechar a aba de verdade."
+    )
+
+    st.markdown("<br>**Colunas para configurar na sua query do Azure DevOps**", unsafe_allow_html=True)
+    st.caption(
+        "Vale para \"Enviar arquivo\" e \"Google Drive\" (os dois dependem do CSV exportado "
+        "manualmente) - a busca automática por PAT já traz tudo isso sozinha, sem precisar "
+        "configurar nada na query."
+    )
+    st.table([
+        {"Adicione esta coluna": "ID", "Vira, no app": "Caso de Teste / ID"},
+        {"Adicione esta coluna": "Work Item Type", "Vira, no app": "Tipos de Teste"},
+        {"Adicione esta coluna": "State", "Vira, no app": "Status"},
+        {"Adicione esta coluna": "Area Path", "Vira, no app": "Projeto"},
+        {"Adicione esta coluna": "Assigned To", "Vira, no app": "Responsável"},
+        {"Adicione esta coluna": "Created By", "Vira, no app": "Autor / Criado por"},
+        {"Adicione esta coluna": "Created Date", "Vira, no app": "Data de Criação"},
+        {"Adicione esta coluna": "Severity (ou Priority)", "Vira, no app": "Severidade / Prioridade"},
+        {"Adicione esta coluna": "Board Column *", "Vira, no app": "Coluna do Board"},
+        {"Adicione esta coluna": "Iteration Path **", "Vira, no app": "Sprint"},
+    ])
+    _callout(
+        "<strong>*</strong> Nem sempre aparece na lista de colunas (depende do processo/"
+        "template do projeto no Azure DevOps) - se faltar, só esse indicador fica "
+        "indisponível pra arquivos exportados manualmente.<br><strong>**</strong> É "
+        "\"Iteration Path\", não \"Iteration ID\" - são campos diferentes; o Path é o texto "
+        "da sprint, o ID é só um número interno sem uso aqui."
+    )
+    st.caption(
+        "Passo a passo completo (com onde clicar no Azure DevOps) e o restante do guia estão "
+        "no PDF acima."
     )
 
 
@@ -346,10 +529,18 @@ def _sec_administracao() -> None:
 def render_sobre_page() -> None:
     render_header(
         titulo="Sobre o App",
-        subtitulo="Como o Refuturiza QA funciona, do login até o relatório em PDF.",
+        subtitulo="Como o app funciona, do login até o relatório em PDF.",
     )
 
     _sec_visao_geral()
+
+    st.divider()
+    _sec_fluxograma_completo()
+
+    st.divider()
+    st.markdown("### 📘 Guia Completo do Usuário")
+    with st.expander("Como gerar seu PAT, montar a query certa, e baixar o guia em PDF", expanded=True):
+        _sec_guia_para_baixar()
 
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown("### Detalhe de cada etapa")

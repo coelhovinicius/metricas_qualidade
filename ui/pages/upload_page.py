@@ -602,6 +602,11 @@ def _renderizar_importacao_google_drive() -> None:
         "pra você escolher um arquivo .csv que já tenha exportado de uma query do Azure DevOps "
         "e deixado lá (ou numa subpasta)."
     )
+    st.caption(
+        "💡 Não usa Google Drive (ou prefere não configurar nada agora)? Escolha "
+        f"**\"{OPCAO_ORIGEM_MANUAL}\"** logo acima - dá pra subir o arquivo .csv direto do seu "
+        "computador, sem precisar compartilhar nenhuma pasta com ninguém."
+    )
 
     email_servico = email_conta_servico()
     if not email_servico:
@@ -637,27 +642,42 @@ def _renderizar_importacao_google_drive() -> None:
             placeholder="https://drive.google.com/drive/folders/XXXXXXXXXXXXXXXXXXXX",
         )
         if action_button("Salvar minha pasta", key="btn_salvar_minha_pasta_drive"):
+            # Reseta os dois avisos persistidos (ver session_state abaixo) a
+            # cada novo clique - só um dos três ramos abaixo (vazio / sem
+            # mudança / mudança de verdade) decide o valor final de cada um,
+            # pra nunca sobrar um aviso "preso" de um clique anterior.
+            st.session_state["aviso_pasta_ja_configurada_drive"] = False
+            st.session_state["erro_minha_pasta_raiz_drive"] = None
             if not link_ou_id_digitado.strip():
                 st.warning("Cole o link ou o ID da pasta antes de salvar.")
             else:
                 novo_id = extrair_id_pasta_do_link(link_ou_id_digitado)
-                with loading_overlay("Confirmando acesso à pasta antes de salvar, aguarde..."):
-                    try:
-                        # Confirma que a conta de serviço realmente enxerga essa
-                        # pasta ANTES de salvar - evita configurar um ID errado
-                        # (ou uma pasta ainda não compartilhada) sem nenhum
-                        # aviso, o que só apareceria na hora de navegar.
-                        testar_conexao_drive(novo_id)
-                    except GoogleDriveError as erro:
-                        st.session_state["erro_minha_pasta_raiz_drive"] = str(erro)
-                    else:
-                        definir_configuracao(chave_pasta, novo_id)
-                        resetar_selecao_google_drive()
-                        st.session_state["erro_minha_pasta_raiz_drive"] = None
-                        registrar_log(
-                            TIPO_PAINEL, username,
-                            f"Configurou a própria pasta do Google Drive para o ID '{novo_id}'",
-                        )
+                if novo_id == pasta_raiz_id:
+                    # Mesmo ID que já estava salvo - não é uma inclusão nem uma
+                    # alteração de verdade (ex.: usuário clicou "Salvar" de novo
+                    # sem ter mudado o link colado). Pedido explícito: só tratar
+                    # como "salvo"/gerar log de auditoria quando algo realmente
+                    # muda - aqui não escreve no banco, não reseta a navegação
+                    # já em cache, e não registra log nenhum, só avisa (depois
+                    # do rerun, ver abaixo) que já era essa a pasta configurada.
+                    st.session_state["aviso_pasta_ja_configurada_drive"] = True
+                else:
+                    with loading_overlay("Confirmando acesso à pasta antes de salvar, aguarde..."):
+                        try:
+                            # Confirma que a conta de serviço realmente enxerga essa
+                            # pasta ANTES de salvar - evita configurar um ID errado
+                            # (ou uma pasta ainda não compartilhada) sem nenhum
+                            # aviso, o que só apareceria na hora de navegar.
+                            testar_conexao_drive(novo_id)
+                        except GoogleDriveError as erro:
+                            st.session_state["erro_minha_pasta_raiz_drive"] = str(erro)
+                        else:
+                            definir_configuracao(chave_pasta, novo_id)
+                            resetar_selecao_google_drive()
+                            registrar_log(
+                                TIPO_PAINEL, username,
+                                f"Configurou a própria pasta do Google Drive para o ID '{novo_id}'",
+                            )
             finish_action("btn_salvar_minha_pasta_drive")
             st.rerun()
 
@@ -666,6 +686,8 @@ def _renderizar_importacao_google_drive() -> None:
                 "Não foi possível confirmar acesso a essa pasta, então ela NÃO foi salva: "
                 + st.session_state["erro_minha_pasta_raiz_drive"]
             )
+        elif st.session_state.get("aviso_pasta_ja_configurada_drive"):
+            st.info("Essa já é a pasta configurada - nada para salvar.")
 
     if not pasta_raiz_id:
         st.info("Configure a sua pasta acima para liberar a navegação de arquivos.")
