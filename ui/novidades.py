@@ -41,13 +41,22 @@ _CAMINHO_GUIA_ADMIN = _RAIZ_PROJETO / "GUIA_ADMIN.md"
 
 # Identificador da leva de novidades atual - ver docstring do módulo, acima,
 # sobre quando (e por que) trocar este valor.
-VERSAO_NOVIDADES_ATUAL = "2026-08-scrum-sprints-story-points"
+VERSAO_NOVIDADES_ATUAL = "2026-08-analise-por-ia"
 
 # (título, descrição) de cada novidade, da mais recente para a mais antiga -
 # cobre tudo que foi entregue desde antes do trabalho de Scrum/Sprint
 # começar (o seletor de tipo de gráfico) até a busca própria por Organização/
 # Projeto/Area Path na página Scrum & Sprints.
 ITENS_NOVIDADES: list[tuple[str, str]] = [
+    (
+        "🤖 Analisar com IA, em quase todo gráfico",
+        "Novo botão \"Analisar com IA\" logo abaixo de praticamente todo gráfico do Dashboard e "
+        "de Scrum & Sprints - gera, sob demanda, um texto explicando o que aquele gráfico mostra, "
+        "pontos de atenção e uma sugestão prática, considerando os filtros já aplicados na tela. "
+        "Recurso opcional (depende de uma automação configurada pela administração - some sozinho "
+        "se ainda não estiver disponível no seu ambiente); nomes de responsáveis nunca são "
+        "enviados para a IA, só rótulos genéricos (\"Colaborador 1\", \"Colaborador 2\"...).",
+    ),
     (
         "☁️ Busca direta no Azure DevOps, só para Scrum & Sprints",
         "Novo expansor \"Fonte de dados desta página\" deixa escolher Organização, Projeto e "

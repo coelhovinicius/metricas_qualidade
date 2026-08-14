@@ -12,10 +12,11 @@ Este guia é para quem usa o painel como **usuário comum** (sem acesso ao Paine
 4. [Importar dados](#4-importar-dados)
 5. [Confirmar o mapeamento de colunas](#5-confirmar-o-mapeamento-de-colunas)
 6. [Usando o dashboard](#6-usando-o-dashboard)
-7. [Construtor de gráfico personalizado](#7-construtor-de-gráfico-personalizado)
-8. [Gerar o relatório em PDF](#8-gerar-o-relatório-em-pdf)
-9. ["Nova Análise" e "Sair"](#9-nova-análise-e-sair)
-10. [Perguntas frequentes](#10-perguntas-frequentes)
+7. [Analisar um gráfico com IA](#7-analisar-um-gráfico-com-ia)
+8. [Construtor de gráfico personalizado](#8-construtor-de-gráfico-personalizado)
+9. [Gerar o relatório em PDF](#9-gerar-o-relatório-em-pdf)
+10. ["Nova Análise" e "Sair"](#10-nova-análise-e-sair)
+11. [Perguntas frequentes](#11-perguntas-frequentes)
 
 ---
 
@@ -132,7 +133,19 @@ Os gráficos disponíveis (cada um só aparece se os campos de que ele depende e
 
 Se algum desses não aparecer para você, normalmente é porque o campo do qual ele depende não foi mapeado no seu arquivo — volte em "Importar Dados" para conferir, se achar que deveria estar disponível.
 
-## 7. Construtor de gráfico personalizado
+## 7. Analisar um gráfico com IA
+
+Logo abaixo de praticamente todo gráfico (no Dashboard e em Scrum & Sprints) existe um botão **🤖 Analisar com IA**. Ele gera, na hora, um texto explicando o que os dados daquele gráfico específico mostram — considerando os filtros que você já aplicou na tela naquele momento —, pontos de atenção e uma sugestão prática.
+
+1. Clique em **🤖 Analisar com IA**, logo abaixo do gráfico. A tela fica bloqueada com um aviso de carregamento por alguns segundos, enquanto a análise é gerada.
+2. O texto aparece num cartão, logo abaixo do botão, com o título "🤖 Análise por IA".
+3. Clique em **Limpar análise** para esconder o texto e poder gerar de novo (por exemplo, depois de mudar um filtro).
+
+> 💡 Esse recurso é **opcional** e depende de uma automação de IA configurada pela pessoa administradora, por fora do app — se ela ainda não tiver sido configurada no seu ambiente, o botão simplesmente não aparece em nenhum gráfico. Se você acha que deveria estar disponível e não está, avise a pessoa administradora.
+
+> 🔒 **Privacidade**: em qualquer gráfico com uma coluna de Responsável, os nomes reais **nunca** são enviados para a IA — só rótulos genéricos ("Colaborador 1", "Colaborador 2"...), sempre o mesmo rótulo para a mesma pessoa dentro de uma mesma análise. O gráfico continua mostrando os nomes reais normalmente na sua tela; só o que é enviado para a IA é anonimizado. Uma análise pode levar até cerca de um minuto para responder — em caso de erro (indisponibilidade momentânea, por exemplo), uma mensagem explica o problema e você pode tentar de novo.
+
+## 8. Construtor de gráfico personalizado
 
 Mais abaixo no dashboard, a seção **"Monte seu gráfico personalizado"** deixa você montar um gráfico do zero, para perguntas que não têm um gráfico fixo pronto entre os da lista acima:
 
@@ -144,7 +157,7 @@ Mais abaixo no dashboard, a seção **"Monte seu gráfico personalizado"** deixa
 
 Clique em **Gerar gráfico**. Ele fica salvo na tela e é recalculado automaticamente se você mudar os filtros da barra lateral depois — não precisa gerar de novo toda vez.
 
-## 8. Gerar o relatório em PDF
+## 9. Gerar o relatório em PDF
 
 No final da página do dashboard, a seção **"Relatório completo em PDF"** tem o botão **📄 Gerar PDF do relatório**. Ele monta um PDF com os KPIs e todos os gráficos que estão visíveis na tela naquele momento — com os mesmos filtros que você aplicou e o mesmo tipo de gráfico escolhido em cada seção (inclusive o gráfico personalizado, se você já tiver gerado um).
 
@@ -154,12 +167,12 @@ No final da página do dashboard, a seção **"Relatório completo em PDF"** tem
 - Conteúdo dentro de um expansor recolhido (como a tabela de dados detalhados) não entra no PDF — só o que já está visível na tela por padrão.
 - Numa situação rara de falha (geralmente por indisponibilidade momentânea do ambiente), uma mensagem de erro explica o problema — o resto do dashboard continua funcionando normalmente, e você pode tentar gerar de novo.
 
-## 9. "Nova Análise" e "Sair"
+## 10. "Nova Análise" e "Sair"
 
 - **🔄 Nova Análise** (barra lateral, aparece só depois de você já ter processado um arquivo) — limpa o arquivo importado e todos os indicadores/gráficos/filtros gerados a partir dele (inclusive o gráfico personalizado que você montou, se algum), para você processar um arquivo novo sem precisar dar F5. Pede confirmação antes de aplicar, porque não tem como desfazer. Sua sessão continua logada, e a organização/projeto/query do Azure DevOps já configurados (se você usa a busca automática) não são apagados.
 - **Sair** (final da barra lateral) — encerra sua sessão de verdade. Use sempre que terminar de usar o painel num computador que não é só seu.
 
-## 10. Perguntas frequentes
+## 11. Perguntas frequentes
 
 **Esqueci minha senha.**
 Fale com o administrador do sistema — a redefinição de senha é feita por ele, não existe um "esqueci minha senha" automático dentro do app.
@@ -178,3 +191,6 @@ Não necessariamente — primeiro confirme com o administrador se sua conta aind
 
 **Vejo só duas opções na barra lateral (Importar Dados / Indicadores), sem "Sobre o App". É normal?**
 Não — "ℹ️ Sobre o App" deveria aparecer para qualquer pessoa logada, incluindo você. Se ela não aparecer, avise o administrador. Já o "⚙️ Administração" (uma quarta opção) é mesmo visível só para o usuário administrador do sistema.
+
+**Não vejo o botão "Analisar com IA" em nenhum gráfico.**
+Esse recurso depende de uma automação de IA configurada pela pessoa administradora, por fora do app — sem ela configurada, o botão simplesmente não aparece em lugar nenhum. Confirme com o administrador se esse recurso está habilitado no seu ambiente.

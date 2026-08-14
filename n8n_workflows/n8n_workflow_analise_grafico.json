@@ -1,0 +1,547 @@
+{
+  "name": "Painel de Qualidade - Analise de Grafico por IA",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "analise-grafico",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-analise-grafico",
+      "name": "Webhook Analise Grafico",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [
+        -40,
+        300
+      ],
+      "notes": "Autenticacao (Header Auth) desligada por padrao aqui - se quiser seguir o mesmo padrao do resto dos seus fluxos, adicione um Header Auth credential e mude 'authentication' para 'headerAuth', compativel com o auth_token opcional que o core/n8n_client.py ja envia como 'Authorization: Bearer <token>'."
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Voce e um analista de qualidade de software (QA) experiente, parte do Painel de Qualidade (Refuturiza QA). Voce recebe os dados de UM grafico especifico do painel, ja filtrados exatamente como estao sendo exibidos na tela agora, e deve escrever uma analise objetiva em portugues sobre o que esses dados mostram.\n\nTitulo do grafico: {{ $('Webhook Analise Grafico').item.json.body.titulo }}\nO que o grafico representa: {{ $('Webhook Analise Grafico').item.json.body.descricao }}\nTipo de visualizacao: {{ $('Webhook Analise Grafico').item.json.body.tipo_grafico }}\n\nFiltros ativos e contexto adicional (JSON): {{ JSON.stringify($('Webhook Analise Grafico').item.json.body.contexto) }}\n\nDados atuais do grafico (JSON, uma linha por item): {{ JSON.stringify($('Webhook Analise Grafico').item.json.body.dados) }}\n\nEscreva a analise em portugues, em paragrafos curtos, sem topicos/bullets, cobrindo: (1) o que os numeros mostram agora, (2) pontos de atencao ou risco, se houver, (3) uma sugestao pratica, se fizer sentido, e (4) SOMENTE SE os dados tiverem uma quebra por Responsavel/Executor (uma pessoa por linha ou por categoria do grafico): repare que os nomes reais ja vem substituidos por rotulos genericos ('Colaborador 1', 'Colaborador 2', etc.) de proposito - use SEMPRE esses rotulos exatamente como recebidos, nunca tente adivinhar, inventar ou inferir quem e a pessoa real por tras do rotulo. Inclua um paragrafo sobre distribuicao de carga entre os colaboradores, usando so os numeros recebidos: pode comentar quando um colaborador concentra um volume desproporcionalmente alto (sinal de reconhecimento, desenvolvimento de carreira, ou risco de dependencia excessiva numa unica pessoa) e quando outro aparece com volume muito baixo - mas para volume baixo, NAO presuma a causa (nunca diga 'precisa de capacitacao', 'baixo desempenho' ou similar), pois pode ter explicacoes legitimas que os dados nao mostram (entrada recente no time, dedicacao parcial, ferias/licenca, itens mais complexos e demorados, trabalho fora do que este grafico mede) - no maximo, comente que 'vale confirmar com o time se ha um motivo especifico'. Trate tudo isso como um dado a mais para a lideranca avaliar, NUNCA como uma decisao ja tomada: nao afirme que um colaborador especifico deveria ser promovido, ter salario alterado ou substituido. Se os dados nao tiverem quebra por pessoa, ignore este item (4) por completo.\n(5) IMPORTANTE - retrato atual NAO e a mesma coisa que esforco/entrega: se o titulo/descricao do grafico indicar que os dados sao um retrato do momento ATUAL (ex.: itens 'em aberto', 'WIP', 'backlog aberto', 'no momento'), um numero BAIXO nesse retrato para uma pessoa ou grupo NAO PODE ser lido como 'trabalhou pouco' ou 'esta ocioso' - pode significar exatamente o contrario (concluiu muita coisa recentemente, por isso sobrou pouco em aberto). Nunca conclua ociosidade, baixo esforco ou baixo desempenho a partir de um numero baixo num grafico de retrato atual. Se o campo 'contexto' recebido trouxer dados adicionais sobre itens concluidos/entregues recentemente (procure chaves como 'itens_concluidos' ou similar), cruze essa informacao com o retrato atual antes de comentar sobre qualquer pessoa - por exemplo, poucos itens em aberto SOMADO A muitos itens concluidos recentemente e sinal de alta entrega, nao de baixa carga. Sem esse dado adicional no contexto, apenas evite tirar qualquer conclusao sobre esforco a partir do numero em aberto isolado.\n\nRetorne APENAS JSON valido conforme o schema. Nenhum texto adicional.",
+        "hasOutputParser": true
+      },
+      "id": "chain-openai",
+      "name": "OpenAI Chain",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.4,
+      "onError": "continueErrorOutput",
+      "position": [
+        280,
+        40
+      ],
+      "notes": "Desacoplado de proposito: nao ha ligacao vinda do Webhook, entao ele nunca roda sozinho. O Error dele ja aponta pra Gemini Chain (igual ao seu exemplo) - se um dia voce ligar o Webhook direto nele em vez de no Gemini Chain, o resto da fila de fallback continua funcionando sem precisar mexer em mais nada."
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list",
+          "cachedResultName": "gpt-4o-mini"
+        },
+        "options": {}
+      },
+      "id": "model-openai",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        220,
+        220
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "REPLACE_ME",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsonSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"analise\": {\n      \"type\": \"string\",\n      \"description\": \"Texto da analise em portugues sobre o que os dados do grafico mostram.\"\n    }\n  },\n  \"required\": [\"analise\"]\n}"
+      },
+      "id": "parser-openai",
+      "name": "Output Parser OpenAI",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.1,
+      "position": [
+        340,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Voce e um analista de qualidade de software (QA) experiente, parte do Painel de Qualidade (Refuturiza QA). Voce recebe os dados de UM grafico especifico do painel, ja filtrados exatamente como estao sendo exibidos na tela agora, e deve escrever uma analise objetiva em portugues sobre o que esses dados mostram.\n\nTitulo do grafico: {{ $('Webhook Analise Grafico').item.json.body.titulo }}\nO que o grafico representa: {{ $('Webhook Analise Grafico').item.json.body.descricao }}\nTipo de visualizacao: {{ $('Webhook Analise Grafico').item.json.body.tipo_grafico }}\n\nFiltros ativos e contexto adicional (JSON): {{ JSON.stringify($('Webhook Analise Grafico').item.json.body.contexto) }}\n\nDados atuais do grafico (JSON, uma linha por item): {{ JSON.stringify($('Webhook Analise Grafico').item.json.body.dados) }}\n\nEscreva a analise em portugues, em paragrafos curtos, sem topicos/bullets, cobrindo: (1) o que os numeros mostram agora, (2) pontos de atencao ou risco, se houver, (3) uma sugestao pratica, se fizer sentido, e (4) SOMENTE SE os dados tiverem uma quebra por Responsavel/Executor (uma pessoa por linha ou por categoria do grafico): repare que os nomes reais ja vem substituidos por rotulos genericos ('Colaborador 1', 'Colaborador 2', etc.) de proposito - use SEMPRE esses rotulos exatamente como recebidos, nunca tente adivinhar, inventar ou inferir quem e a pessoa real por tras do rotulo. Inclua um paragrafo sobre distribuicao de carga entre os colaboradores, usando so os numeros recebidos: pode comentar quando um colaborador concentra um volume desproporcionalmente alto (sinal de reconhecimento, desenvolvimento de carreira, ou risco de dependencia excessiva numa unica pessoa) e quando outro aparece com volume muito baixo - mas para volume baixo, NAO presuma a causa (nunca diga 'precisa de capacitacao', 'baixo desempenho' ou similar), pois pode ter explicacoes legitimas que os dados nao mostram (entrada recente no time, dedicacao parcial, ferias/licenca, itens mais complexos e demorados, trabalho fora do que este grafico mede) - no maximo, comente que 'vale confirmar com o time se ha um motivo especifico'. Trate tudo isso como um dado a mais para a lideranca avaliar, NUNCA como uma decisao ja tomada: nao afirme que um colaborador especifico deveria ser promovido, ter salario alterado ou substituido. Se os dados nao tiverem quebra por pessoa, ignore este item (4) por completo.\n(5) IMPORTANTE - retrato atual NAO e a mesma coisa que esforco/entrega: se o titulo/descricao do grafico indicar que os dados sao um retrato do momento ATUAL (ex.: itens 'em aberto', 'WIP', 'backlog aberto', 'no momento'), um numero BAIXO nesse retrato para uma pessoa ou grupo NAO PODE ser lido como 'trabalhou pouco' ou 'esta ocioso' - pode significar exatamente o contrario (concluiu muita coisa recentemente, por isso sobrou pouco em aberto). Nunca conclua ociosidade, baixo esforco ou baixo desempenho a partir de um numero baixo num grafico de retrato atual. Se o campo 'contexto' recebido trouxer dados adicionais sobre itens concluidos/entregues recentemente (procure chaves como 'itens_concluidos' ou similar), cruze essa informacao com o retrato atual antes de comentar sobre qualquer pessoa - por exemplo, poucos itens em aberto SOMADO A muitos itens concluidos recentemente e sinal de alta entrega, nao de baixa carga. Sem esse dado adicional no contexto, apenas evite tirar qualquer conclusao sobre esforco a partir do numero em aberto isolado.\n\nRetorne APENAS JSON valido conforme o schema. Nenhum texto adicional.",
+        "hasOutputParser": true
+      },
+      "id": "chain-gemini",
+      "name": "Gemini Chain",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.4,
+      "onError": "continueErrorOutput",
+      "position": [
+        280,
+        300
+      ],
+      "notes": "Primeira tentativa (recebe direto do Webhook). Se falhar (Error), cai para Groq Chain."
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "model-gemini",
+      "name": "Google Gemini",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        220,
+        480
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "REPLACE_ME",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      },
+      "notes": "Sem modelo fixo no JSON (igual ao seu exemplo) - depois de importar, abra o no e escolha o modelo Gemini no dropdown."
+    },
+    {
+      "parameters": {
+        "jsonSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"analise\": {\n      \"type\": \"string\",\n      \"description\": \"Texto da analise em portugues sobre o que os dados do grafico mostram.\"\n    }\n  },\n  \"required\": [\"analise\"]\n}"
+      },
+      "id": "parser-gemini",
+      "name": "Output Parser Gemini",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.1,
+      "position": [
+        340,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Voce e um analista de qualidade de software (QA) experiente, parte do Painel de Qualidade (Refuturiza QA). Voce recebe os dados de UM grafico especifico do painel, ja filtrados exatamente como estao sendo exibidos na tela agora, e deve escrever uma analise objetiva em portugues sobre o que esses dados mostram.\n\nTitulo do grafico: {{ $('Webhook Analise Grafico').item.json.body.titulo }}\nO que o grafico representa: {{ $('Webhook Analise Grafico').item.json.body.descricao }}\nTipo de visualizacao: {{ $('Webhook Analise Grafico').item.json.body.tipo_grafico }}\n\nFiltros ativos e contexto adicional (JSON): {{ JSON.stringify($('Webhook Analise Grafico').item.json.body.contexto) }}\n\nDados atuais do grafico (JSON, uma linha por item): {{ JSON.stringify($('Webhook Analise Grafico').item.json.body.dados) }}\n\nEscreva a analise em portugues, em paragrafos curtos, sem topicos/bullets, cobrindo: (1) o que os numeros mostram agora, (2) pontos de atencao ou risco, se houver, (3) uma sugestao pratica, se fizer sentido, e (4) SOMENTE SE os dados tiverem uma quebra por Responsavel/Executor (uma pessoa por linha ou por categoria do grafico): repare que os nomes reais ja vem substituidos por rotulos genericos ('Colaborador 1', 'Colaborador 2', etc.) de proposito - use SEMPRE esses rotulos exatamente como recebidos, nunca tente adivinhar, inventar ou inferir quem e a pessoa real por tras do rotulo. Inclua um paragrafo sobre distribuicao de carga entre os colaboradores, usando so os numeros recebidos: pode comentar quando um colaborador concentra um volume desproporcionalmente alto (sinal de reconhecimento, desenvolvimento de carreira, ou risco de dependencia excessiva numa unica pessoa) e quando outro aparece com volume muito baixo - mas para volume baixo, NAO presuma a causa (nunca diga 'precisa de capacitacao', 'baixo desempenho' ou similar), pois pode ter explicacoes legitimas que os dados nao mostram (entrada recente no time, dedicacao parcial, ferias/licenca, itens mais complexos e demorados, trabalho fora do que este grafico mede) - no maximo, comente que 'vale confirmar com o time se ha um motivo especifico'. Trate tudo isso como um dado a mais para a lideranca avaliar, NUNCA como uma decisao ja tomada: nao afirme que um colaborador especifico deveria ser promovido, ter salario alterado ou substituido. Se os dados nao tiverem quebra por pessoa, ignore este item (4) por completo.\n(5) IMPORTANTE - retrato atual NAO e a mesma coisa que esforco/entrega: se o titulo/descricao do grafico indicar que os dados sao um retrato do momento ATUAL (ex.: itens 'em aberto', 'WIP', 'backlog aberto', 'no momento'), um numero BAIXO nesse retrato para uma pessoa ou grupo NAO PODE ser lido como 'trabalhou pouco' ou 'esta ocioso' - pode significar exatamente o contrario (concluiu muita coisa recentemente, por isso sobrou pouco em aberto). Nunca conclua ociosidade, baixo esforco ou baixo desempenho a partir de um numero baixo num grafico de retrato atual. Se o campo 'contexto' recebido trouxer dados adicionais sobre itens concluidos/entregues recentemente (procure chaves como 'itens_concluidos' ou similar), cruze essa informacao com o retrato atual antes de comentar sobre qualquer pessoa - por exemplo, poucos itens em aberto SOMADO A muitos itens concluidos recentemente e sinal de alta entrega, nao de baixa carga. Sem esse dado adicional no contexto, apenas evite tirar qualquer conclusao sobre esforco a partir do numero em aberto isolado.\n\nRetorne APENAS JSON valido conforme o schema. Nenhum texto adicional.",
+        "hasOutputParser": true
+      },
+      "id": "chain-groq",
+      "name": "Groq Chain",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.4,
+      "onError": "continueErrorOutput",
+      "position": [
+        600,
+        300
+      ],
+      "notes": "Segunda tentativa (so roda se o Gemini Chain der Error). Se falhar tambem, cai para Groq Chain 1."
+    },
+    {
+      "parameters": {
+        "model": "llama-3.3-70b-versatile",
+        "options": {}
+      },
+      "id": "model-groq",
+      "name": "Groq Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
+      "typeVersion": 1,
+      "position": [
+        540,
+        480
+      ],
+      "credentials": {
+        "groqApi": {
+          "id": "REPLACE_ME",
+          "name": "Groq account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsonSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"analise\": {\n      \"type\": \"string\",\n      \"description\": \"Texto da analise em portugues sobre o que os dados do grafico mostram.\"\n    }\n  },\n  \"required\": [\"analise\"]\n}"
+      },
+      "id": "parser-groq",
+      "name": "Output Parser Groq",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.1,
+      "position": [
+        660,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Voce e um analista de qualidade de software (QA) experiente, parte do Painel de Qualidade (Refuturiza QA). Voce recebe os dados de UM grafico especifico do painel, ja filtrados exatamente como estao sendo exibidos na tela agora, e deve escrever uma analise objetiva em portugues sobre o que esses dados mostram.\n\nTitulo do grafico: {{ $('Webhook Analise Grafico').item.json.body.titulo }}\nO que o grafico representa: {{ $('Webhook Analise Grafico').item.json.body.descricao }}\nTipo de visualizacao: {{ $('Webhook Analise Grafico').item.json.body.tipo_grafico }}\n\nFiltros ativos e contexto adicional (JSON): {{ JSON.stringify($('Webhook Analise Grafico').item.json.body.contexto) }}\n\nDados atuais do grafico (JSON, uma linha por item): {{ JSON.stringify($('Webhook Analise Grafico').item.json.body.dados) }}\n\nEscreva a analise em portugues, em paragrafos curtos, sem topicos/bullets, cobrindo: (1) o que os numeros mostram agora, (2) pontos de atencao ou risco, se houver, (3) uma sugestao pratica, se fizer sentido, e (4) SOMENTE SE os dados tiverem uma quebra por Responsavel/Executor (uma pessoa por linha ou por categoria do grafico): repare que os nomes reais ja vem substituidos por rotulos genericos ('Colaborador 1', 'Colaborador 2', etc.) de proposito - use SEMPRE esses rotulos exatamente como recebidos, nunca tente adivinhar, inventar ou inferir quem e a pessoa real por tras do rotulo. Inclua um paragrafo sobre distribuicao de carga entre os colaboradores, usando so os numeros recebidos: pode comentar quando um colaborador concentra um volume desproporcionalmente alto (sinal de reconhecimento, desenvolvimento de carreira, ou risco de dependencia excessiva numa unica pessoa) e quando outro aparece com volume muito baixo - mas para volume baixo, NAO presuma a causa (nunca diga 'precisa de capacitacao', 'baixo desempenho' ou similar), pois pode ter explicacoes legitimas que os dados nao mostram (entrada recente no time, dedicacao parcial, ferias/licenca, itens mais complexos e demorados, trabalho fora do que este grafico mede) - no maximo, comente que 'vale confirmar com o time se ha um motivo especifico'. Trate tudo isso como um dado a mais para a lideranca avaliar, NUNCA como uma decisao ja tomada: nao afirme que um colaborador especifico deveria ser promovido, ter salario alterado ou substituido. Se os dados nao tiverem quebra por pessoa, ignore este item (4) por completo.\n(5) IMPORTANTE - retrato atual NAO e a mesma coisa que esforco/entrega: se o titulo/descricao do grafico indicar que os dados sao um retrato do momento ATUAL (ex.: itens 'em aberto', 'WIP', 'backlog aberto', 'no momento'), um numero BAIXO nesse retrato para uma pessoa ou grupo NAO PODE ser lido como 'trabalhou pouco' ou 'esta ocioso' - pode significar exatamente o contrario (concluiu muita coisa recentemente, por isso sobrou pouco em aberto). Nunca conclua ociosidade, baixo esforco ou baixo desempenho a partir de um numero baixo num grafico de retrato atual. Se o campo 'contexto' recebido trouxer dados adicionais sobre itens concluidos/entregues recentemente (procure chaves como 'itens_concluidos' ou similar), cruze essa informacao com o retrato atual antes de comentar sobre qualquer pessoa - por exemplo, poucos itens em aberto SOMADO A muitos itens concluidos recentemente e sinal de alta entrega, nao de baixa carga. Sem esse dado adicional no contexto, apenas evite tirar qualquer conclusao sobre esforco a partir do numero em aberto isolado.\n\nRetorne APENAS JSON valido conforme o schema. Nenhum texto adicional.",
+        "hasOutputParser": true
+      },
+      "id": "chain-groq-1",
+      "name": "Groq Chain 1",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.4,
+      "onError": "continueErrorOutput",
+      "position": [
+        920,
+        300
+      ],
+      "notes": "Terceira tentativa. Usei um modelo Groq diferente (llama-3.1-8b-instant) de proposito, em vez de repetir o mesmo modelo - assim, alem de erro transitorio de rede, tambem cobre o caso de UM modelo especifico da Groq estar fora do ar/sem quota. Se preferir simplificar, pode repetir o mesmo modelo do Groq Chain aqui. So roda se Groq Chain der Error; se falhar tambem, cai para Mistral Chain."
+    },
+    {
+      "parameters": {
+        "model": "llama-3.1-8b-instant",
+        "options": {}
+      },
+      "id": "model-groq-1",
+      "name": "Groq Model1",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
+      "typeVersion": 1,
+      "position": [
+        860,
+        480
+      ],
+      "credentials": {
+        "groqApi": {
+          "id": "REPLACE_ME",
+          "name": "Groq account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsonSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"analise\": {\n      \"type\": \"string\",\n      \"description\": \"Texto da analise em portugues sobre o que os dados do grafico mostram.\"\n    }\n  },\n  \"required\": [\"analise\"]\n}"
+      },
+      "id": "parser-groq-1",
+      "name": "Output Parser Groq 1",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.1,
+      "position": [
+        980,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Voce e um analista de qualidade de software (QA) experiente, parte do Painel de Qualidade (Refuturiza QA). Voce recebe os dados de UM grafico especifico do painel, ja filtrados exatamente como estao sendo exibidos na tela agora, e deve escrever uma analise objetiva em portugues sobre o que esses dados mostram.\n\nTitulo do grafico: {{ $('Webhook Analise Grafico').item.json.body.titulo }}\nO que o grafico representa: {{ $('Webhook Analise Grafico').item.json.body.descricao }}\nTipo de visualizacao: {{ $('Webhook Analise Grafico').item.json.body.tipo_grafico }}\n\nFiltros ativos e contexto adicional (JSON): {{ JSON.stringify($('Webhook Analise Grafico').item.json.body.contexto) }}\n\nDados atuais do grafico (JSON, uma linha por item): {{ JSON.stringify($('Webhook Analise Grafico').item.json.body.dados) }}\n\nEscreva a analise em portugues, em paragrafos curtos, sem topicos/bullets, cobrindo: (1) o que os numeros mostram agora, (2) pontos de atencao ou risco, se houver, (3) uma sugestao pratica, se fizer sentido, e (4) SOMENTE SE os dados tiverem uma quebra por Responsavel/Executor (uma pessoa por linha ou por categoria do grafico): repare que os nomes reais ja vem substituidos por rotulos genericos ('Colaborador 1', 'Colaborador 2', etc.) de proposito - use SEMPRE esses rotulos exatamente como recebidos, nunca tente adivinhar, inventar ou inferir quem e a pessoa real por tras do rotulo. Inclua um paragrafo sobre distribuicao de carga entre os colaboradores, usando so os numeros recebidos: pode comentar quando um colaborador concentra um volume desproporcionalmente alto (sinal de reconhecimento, desenvolvimento de carreira, ou risco de dependencia excessiva numa unica pessoa) e quando outro aparece com volume muito baixo - mas para volume baixo, NAO presuma a causa (nunca diga 'precisa de capacitacao', 'baixo desempenho' ou similar), pois pode ter explicacoes legitimas que os dados nao mostram (entrada recente no time, dedicacao parcial, ferias/licenca, itens mais complexos e demorados, trabalho fora do que este grafico mede) - no maximo, comente que 'vale confirmar com o time se ha um motivo especifico'. Trate tudo isso como um dado a mais para a lideranca avaliar, NUNCA como uma decisao ja tomada: nao afirme que um colaborador especifico deveria ser promovido, ter salario alterado ou substituido. Se os dados nao tiverem quebra por pessoa, ignore este item (4) por completo.\n(5) IMPORTANTE - retrato atual NAO e a mesma coisa que esforco/entrega: se o titulo/descricao do grafico indicar que os dados sao um retrato do momento ATUAL (ex.: itens 'em aberto', 'WIP', 'backlog aberto', 'no momento'), um numero BAIXO nesse retrato para uma pessoa ou grupo NAO PODE ser lido como 'trabalhou pouco' ou 'esta ocioso' - pode significar exatamente o contrario (concluiu muita coisa recentemente, por isso sobrou pouco em aberto). Nunca conclua ociosidade, baixo esforco ou baixo desempenho a partir de um numero baixo num grafico de retrato atual. Se o campo 'contexto' recebido trouxer dados adicionais sobre itens concluidos/entregues recentemente (procure chaves como 'itens_concluidos' ou similar), cruze essa informacao com o retrato atual antes de comentar sobre qualquer pessoa - por exemplo, poucos itens em aberto SOMADO A muitos itens concluidos recentemente e sinal de alta entrega, nao de baixa carga. Sem esse dado adicional no contexto, apenas evite tirar qualquer conclusao sobre esforco a partir do numero em aberto isolado.\n\nRetorne APENAS JSON valido conforme o schema. Nenhum texto adicional.",
+        "hasOutputParser": true
+      },
+      "id": "chain-mistral",
+      "name": "Mistral Chain",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.4,
+      "onError": "continueErrorOutput",
+      "position": [
+        1240,
+        300
+      ],
+      "notes": "Ultima tentativa. Diferente do seu exemplo (onde a ultima Chain nao tem saida de Error), deixei o Error tambem tratado aqui, indo para o no 'Mensagem de Erro Final' - assim o webhook sempre devolve uma resposta valida em JSON em vez de deixar a chamada travada/sem resposta caso os tres provedores falhem."
+    },
+    {
+      "parameters": {
+        "model": "mistral-large-latest",
+        "options": {}
+      },
+      "id": "model-mistral",
+      "name": "Mistral Cloud Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatMistralCloud",
+      "typeVersion": 1,
+      "position": [
+        1180,
+        480
+      ],
+      "credentials": {
+        "mistralCloudApi": {
+          "id": "REPLACE_ME",
+          "name": "Mistral Cloud account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsonSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"analise\": {\n      \"type\": \"string\",\n      \"description\": \"Texto da analise em portugues sobre o que os dados do grafico mostram.\"\n    }\n  },\n  \"required\": [\"analise\"]\n}"
+      },
+      "id": "parser-mistral",
+      "name": "Output Parser Mistral",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.1,
+      "position": [
+        1300,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "assign-analise-erro",
+              "name": "analise",
+              "type": "string",
+              "value": "Nao foi possivel gerar a analise por IA agora - todos os provedores configurados (Gemini, Groq e Mistral) falharam ou estao indisponiveis no momento. Tente novamente em alguns instantes."
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-erro-final",
+      "name": "Mensagem de Erro Final",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1240,
+        620
+      ],
+      "notes": "So roda se ate o Mistral Chain (ultimo da fila) falhar. Gera um campo 'analise' direto (sem 'output' na frente) - o no Responder Analise cai no '?? $json' exatamente por causa desse caso."
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.output ?? $json }}",
+        "options": {}
+      },
+      "id": "respond-webhook",
+      "name": "Responder Analise",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1560,
+        300
+      ],
+      "notes": "Mesmo padrao do seu exemplo: quando a Chain usa Output Parser estruturado, o resultado parseado fica em $json.output - como nosso schema e so {analise: '...'}, isso ja devolve exatamente o formato que core/n8n_client.py espera. O '?? $json' cobre o caso do no 'Mensagem de Erro Final', que grava 'analise' direto na raiz."
+    }
+  ],
+  "connections": {
+    "Webhook Analise Grafico": {
+      "main": [
+        [
+          {
+            "node": "OpenAI Chain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chain": {
+      "main": [
+        [
+          {
+            "node": "Responder Analise",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Gemini Chain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "OpenAI Chain",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Output Parser OpenAI": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "OpenAI Chain",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini Chain": {
+      "main": [
+        [
+          {
+            "node": "Responder Analise",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Groq Chain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Gemini Chain",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Output Parser Gemini": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Gemini Chain",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Chain": {
+      "main": [
+        [
+          {
+            "node": "Responder Analise",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Groq Chain 1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Groq Chain",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Output Parser Groq": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Groq Chain",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Chain 1": {
+      "main": [
+        [
+          {
+            "node": "Responder Analise",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mistral Chain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Model1": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Groq Chain 1",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Output Parser Groq 1": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Groq Chain 1",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mistral Chain": {
+      "main": [
+        [
+          {
+            "node": "Responder Analise",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mensagem de Erro Final",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mistral Cloud Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Mistral Chain",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Output Parser Mistral": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Mistral Chain",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mensagem de Erro Final": {
+      "main": [
+        [
+          {
+            "node": "Responder Analise",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": []
+}

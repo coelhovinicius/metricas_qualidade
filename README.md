@@ -15,6 +15,7 @@ Acesso multiusuário com login, controle de quem pode ver o quê e um fluxo de s
   - [Mapeamento de colunas](#mapeamento-de-colunas)
   - [Filtros do dashboard](#filtros-do-dashboard)
   - [Indicadores e gráficos](#indicadores-e-gráficos)
+  - [Análise de gráfico por IA](#análise-de-gráfico-por-ia)
   - [Scrum & Sprints](#scrum--sprints)
   - [Construtor de gráfico personalizado](#construtor-de-gráfico-personalizado)
   - [Relatório completo em PDF](#relatório-completo-em-pdf)
@@ -49,6 +50,7 @@ Fluxo de uso, em três passos:
 - Quem não tem conta pode clicar em **"Solicitar acesso"** e preencher nome, e-mail e motivo — a solicitação fica registrada num banco de dados (Turso) e só é visível para o administrador dentro do próprio app. Não há envio de e-mail nem integração externa.
 - **Painel Administrativo** (visível só para o usuário `admin`): lista as solicitações por status (Pendentes, Já criadas, Revogadas, Rejeitadas), com ações de aprovar/rejeitar/revogar/recuperar/excluir, exclusão em massa, logs do sistema, diagnóstico de conexão com o banco de dados e mais — ver [Painel administrativo](#painel-administrativo) abaixo.
 - A criação de conta em si continua manual, por decisão de projeto: o administrador gera o hash da senha (`scripts/gerar_hash_senha.py`) e adiciona o usuário nos Secrets do Streamlit, depois marca a solicitação como "criada" no painel — o painel documenta e organiza os pedidos, mas não cria contas sozinho.
+- **Modal de novidades**, logo após o login: resume, em linguagem simples, tudo que mudou no app desde a última leva de melhorias, com opção de marcar "não mostrar mais essas novidades" (persistida por usuário) e atalhos de download para o guia específico do papel de quem está logado (Convidado ou Administrador) e para o Guia Completo em PDF, comum aos dois papéis — ver `ui/novidades.py`.
 
 ### Importação de dados
 
@@ -108,6 +110,16 @@ Aplicados a todo o painel, na barra lateral:
 - **Tabela de dados detalhados** (filtrados) com exportação para CSV.
 
 Praticamente todo gráfico permite escolher o tipo de visualização (Barras, Barras Horizontais, Pizza, Rosca, Linha, Área, Treemap, Pareto, Funil, Mapa de Calor, Radar preenchido — conforme fizer sentido para os dados daquele indicador). A paleta de cores foi desenhada especificamente para que categorias vizinhas num mesmo gráfico nunca fiquem com tons parecidos, mesmo em gráficos com poucas categorias.
+
+### Análise de gráfico por IA
+
+Logo abaixo de praticamente todo gráfico (Dashboard e Scrum & Sprints), o botão **"🤖 Analisar com IA"** gera, sob demanda, um texto explicando o que os dados daquele gráfico específico mostram — já considerando os filtros aplicados na tela naquele momento —, pontos de atenção e uma sugestão prática.
+
+- **Recurso opcional**: o app não fala direto com nenhuma API de IA — envia os dados do gráfico para um webhook [n8n](https://n8n.io/) configurável (ver [Configuração (secrets)](#configuração-secrets)), que decide qual modelo de IA usar e devolve o texto. Sem a seção `[n8n]` configurada nos Secrets, o botão simplesmente não aparece em nenhum gráfico — mesmo padrão de degradação graciosa das outras integrações opcionais deste app.
+- **Anonimização automática**: em qualquer gráfico com uma coluna de Responsável, os nomes reais nunca são enviados para a IA — são trocados por rótulos genéricos ("Colaborador 1", "Colaborador 2"...) antes do envio, sempre o mesmo rótulo para a mesma pessoa dentro de uma mesma análise. O gráfico na tela continua mostrando os nomes reais normalmente.
+- Para o gráfico "Carga de Trabalho em Aberto por Responsável" (Scrum & Sprints), a análise também recebe quantos itens cada pessoa concluiu nos últimos 30 dias — para que um número baixo de itens em aberto não seja lido como "trabalhando pouco" quando na verdade reflete alto volume concluído recentemente.
+
+Ver [DOCUMENTACAO_TECNICA.md, seção 10](DOCUMENTACAO_TECNICA.md#10-análise-de-gráfico-por-ia-n8n) para os detalhes técnicos, e [GUIA_ADMIN.md, seção 13](GUIA_ADMIN.md#13-analisar-um-gráfico-com-ia-configuração-e-uso) para o passo a passo de configuração.
 
 ### Scrum & Sprints
 
@@ -206,10 +218,12 @@ core/
   gerador_guia_pdf.py          # monta (em memória) o PDF do Guia Completo do Usuário
   google_drive_client.py       # cliente da API do Google Drive (conta de serviço)
   logs_sistema.py              # logs de auditoria/erros/acessos (tabela no Turso)
+  n8n_client.py                 # cliente HTTP minimalista para o webhook n8n da análise de gráfico por IA
   pdf_report.py                 # geração do relatório completo em PDF (kaleido + reportlab)
   solicitacoes_conta.py        # CRUD das solicitações de acesso (tabela no Turso)
   turso_client.py              # cliente HTTP minimalista para o banco Turso
 ui/
+  analise_grafico.py            # botão "Analisar com IA" (anonimização de responsáveis + chamada ao core/n8n_client.py)
   components.py                # componentes reutilizáveis (cabeçalho, overlay de loading, botão anti-clique-duplo...)
   theme.py                     # cores, paletas e CSS global
   graficos.py                  # infra de gráficos compartilhada (dispatcher de "Tipo de gráfico", Pareto/Mapa de Calor/Bolha, FilaGraficos) - Dashboard e Scrum & Sprints
@@ -262,6 +276,7 @@ FALLBACK_DEPLOY.md            # hospedagem alternativa (Docker) caso o Streamlit
 | Integração com Azure DevOps | requests (API REST, sem SDK) |
 | Integração com Google Drive | google-api-python-client + google-auth (conta de serviço) |
 | Banco de dados (solicitações, logs, configuração) | Turso (SQLite via HTTP), acessado com `requests` puro |
+| Análise de gráfico por IA | Webhook n8n configurável (`requests` puro, sem SDK) - modelo/prompt de IA mantidos inteiramente do lado do fluxo n8n |
 | Fuso horário | zoneinfo (biblioteca padrão do Python) |
 | Hospedagem principal | Streamlit Community Cloud |
 | Hospedagem alternativa (fallback) | Docker, em Hugging Face Spaces ou Render (ver `FALLBACK_DEPLOY.md`) |
@@ -357,11 +372,18 @@ token_uri = "https://oauth2.googleapis.com/token"
 auth_provider_x509_cert_url = "..."
 client_x509_cert_url = "..."
 universe_domain = "googleapis.com"
+
+# Opcional - só necessário para o botão "Analisar com IA" nos gráficos (ver
+# "Análise de gráfico por IA" acima e GUIA_ADMIN.md, seção 13).
+[n8n]
+webhook_url = "https://SEU-WEBHOOK.exemplo.com/webhook/analise-grafico"
+auth_token = "TOKEN_OPCIONAL_SE_O_WEBHOOK_EXIGIR_AUTENTICACAO"
 ```
 
 - **`[auth]`** contém a base de usuários inteira (credenciais + config do cookie + e-mails pré-autorizados) — é a fonte de credenciais preferida (ver [Gestão de usuários](#gestão-de-usuários)). O `auth/users.yaml` local continua existindo como fallback só para rodar sem configurar Secrets (ex.: primeira vez clonando o projeto) — nesse caso funciona exatamente como antes, só que **sem essa fonte nunca ser commitada**. Se quiser manter só a `cookie_key` nos Secrets (formato antigo/mínimo) e o resto no arquivo local, isso também continua funcionando — `auth/auth_manager.py` aceita as duas formas.
 - `turso.*` é exigido para o fluxo de solicitação de acesso, o Painel Administrativo, e para o Guia do Usuário em PDF ser gerado/persistido pelo próprio app. Sem essa configuração, o restante do app funciona normalmente — só esses fluxos específicos ficam indisponíveis, com uma mensagem de erro clara em vez de travar a aplicação.
 - `[google_drive]` é exigido só para a opção "Buscar arquivo no Google Drive" na importação — ver **[Configurar Google Drive.md](Configurar%20Google%20Drive.md)**. Localmente, pode ficar num arquivo `core/google_drive_credentials.json` em vez de nos Secrets (nunca commitado — ver `.gitignore`).
+- `[n8n]` é exigido só para o botão "Analisar com IA" nos gráficos (ver [Análise de gráfico por IA](#análise-de-gráfico-por-ia)) — sem essa seção, o resto do app funciona normalmente, só esse botão fica indisponível em todos os gráficos.
 - O Personal Access Token do Azure DevOps **não é** um secret da aplicação — cada usuário cola o próprio PAT dentro do app, na tela de importação, e ele nunca é persistido.
 
 Para converter um `auth/users.yaml` já existente no bloco `[auth.*]` acima sem digitar hash de senha manualmente, rode localmente:
@@ -406,6 +428,7 @@ Se o repositório for **público**, isso é ainda mais importante: qualquer arqu
 - O PAT do Azure DevOps de cada usuário nunca é salvo em disco, banco de dados ou Secrets — vive só na memória da sessão do navegador enquanto o usuário está logado.
 - A credencial da conta de serviço do Google Drive fica só nos Secrets do Streamlit (produção) ou num arquivo local ignorado pelo Git — nunca é colada ou exibida pela tela do app; é uma credencial única, compartilhada por todo mundo logado, mas cada usuário só enxerga/configura a própria pasta.
 - O "código de acesso ao conteúdo administrativo de Sobre o App" (ver [Sobre o App e Guia do Usuário](#sobre-o-app-e-guia-do-usuário)) **não é** uma segunda camada de autenticação de verdade — é só um seletor de conteúdo informativo, guardado como configuração comum no mesmo banco de dados. Não use esse código para proteger nada que exija segurança real.
+- A **análise de gráfico por IA** (ver [Análise de gráfico por IA](#análise-de-gráfico-por-ia)) envia só os dados do gráfico específico já filtrados na tela (nunca o arquivo inteiro) para o webhook n8n configurado nos Secrets — e nomes reais de Responsável são sempre trocados por rótulos genéricos antes do envio, para qualquer gráfico com essa coluna.
 - O PDF do Guia do Usuário, disponível para qualquer pessoa logada baixar e repassar, é escrito de propósito sem nenhum dado específico deste ambiente (nenhuma credencial, nenhum e-mail de conta de serviço real, nenhuma URL de organização) — onde um valor real ajudaria, o texto orienta a pessoa a conferir a própria tela do app em vez de embutir um valor fixo.
 - As solicitações de acesso não disparam e-mail nem qualquer notificação externa — ficam visíveis só para quem acessa o Painel Administrativo dentro do próprio app.
 - A sessão de login é encerrada automaticamente ao fechar de verdade a aba/janela do navegador (não sobrevive além de um F5 dentro do prazo configurado).
@@ -418,3 +441,4 @@ Se o repositório for **público**, isso é ainda mais importante: qualquer arqu
 - Indicadores que dependem de um campo específico (datas, Severidade, Coluna do Board, Sprint etc.) só aparecem quando esse campo está mapeado nos dados importados — não há como calculá-los sem a informação correspondente no arquivo/consulta de origem.
 - A geração do relatório em PDF do dashboard depende de conseguir abrir um navegador Chrome/Chromium no ambiente onde o app está rodando (local ou Streamlit Community Cloud) — em ambientes de execução muito restritos/minimalistas sem o `packages.txt` correspondente, essa funcionalidade específica pode falhar (com uma mensagem de erro clara), mesmo com o resto do dashboard funcionando normalmente.
 - O Google Drive permite hoje uma pasta raiz por usuário (não múltiplas pastas raiz por pessoa) — nada impede, porém, que essa pasta raiz seja uma pasta "guarda-chuva" com subpastas por projeto/time dentro dela, já que a navegação do app permite entrar em subpastas livremente.
+- A **análise de gráfico por IA** depende de uma automação n8n mantida fora deste app — o app não controla nem valida a qualidade/precisão do texto gerado, só envia os dados e exibe a resposta. Sem a seção `[n8n]` configurada nos Secrets, o recurso fica indisponível em todos os gráficos, sem afetar o resto do app.

@@ -18,10 +18,11 @@ Se você só precisa saber como usar o dashboard no dia a dia (sem as funções 
 10. [Importar dados](#10-importar-dados)
 11. [Confirmar o mapeamento de colunas](#11-confirmar-o-mapeamento-de-colunas)
 12. [Usando o dashboard](#12-usando-o-dashboard)
-13. [Construtor de gráfico personalizado](#13-construtor-de-gráfico-personalizado)
-14. [Gerar o relatório em PDF](#14-gerar-o-relatório-em-pdf)
-15. ["Nova Análise" e "Sair"](#15-nova-análise-e-sair)
-16. [Perguntas frequentes](#16-perguntas-frequentes)
+13. [Analisar um gráfico com IA (configuração e uso)](#13-analisar-um-gráfico-com-ia-configuração-e-uso)
+14. [Construtor de gráfico personalizado](#14-construtor-de-gráfico-personalizado)
+15. [Gerar o relatório em PDF](#15-gerar-o-relatório-em-pdf)
+16. ["Nova Análise" e "Sair"](#16-nova-análise-e-sair)
+17. [Perguntas frequentes](#17-perguntas-frequentes)
 
 ---
 
@@ -219,7 +220,35 @@ Os gráficos disponíveis (aparecem ou não dependendo de quais campos você map
 
 <small>* Só com dados vindos da busca automática por PAT (Opção B da seção 10).</small>
 
-## 13. Construtor de gráfico personalizado
+## 13. Analisar um gráfico com IA (configuração e uso)
+
+Logo abaixo de praticamente todo gráfico (Dashboard e Scrum & Sprints) existe um botão **🤖 Analisar com IA**, que gera um texto explicando o que os dados daquele gráfico mostram, pontos de atenção e uma sugestão prática — considerando os filtros já aplicados na tela. O uso é igual para qualquer pessoa logada (ver seção 12); esta seção cobre a parte que só diz respeito a você, como administrador: como habilitar o recurso.
+
+### Como funciona por baixo dos panos
+
+O app **não fala direto com nenhuma API de IA** (OpenAI, Gemini etc.) — ele só envia os dados do gráfico (já filtrados como estão na tela) para um **webhook** que você configura, e devolve o texto que essa automação responder. Qual modelo de IA é usado, qual o prompt exato, e qualquer chave de API de IA em si são responsabilidade inteiramente dessa automação externa, não deste app — o app não sabe (e não precisa saber) o que acontece do outro lado do webhook.
+
+### Habilitando o recurso
+
+Sem nenhuma configuração, o botão **"Analisar com IA" simplesmente não aparece** em nenhum gráfico — não trava nem exibe erro, só fica indisponível, igual às outras integrações opcionais deste app (Google Drive, por exemplo). Para habilitar, adicione a seção `[n8n]` nos **Secrets do Streamlit** (produção) ou no seu `.streamlit/secrets.toml` local:
+
+```toml
+[n8n]
+webhook_url = "https://SEU-WEBHOOK.exemplo.com/webhook/analise-grafico"
+auth_token = "TOKEN_OPCIONAL_SE_O_WEBHOOK_EXIGIR_AUTENTICACAO"
+```
+
+- **`webhook_url`** — a URL que recebe os dados do gráfico (POST, corpo JSON) e devolve o texto da análise. É o único campo obrigatório.
+- **`auth_token`** — opcional; se preenchido, é enviado como `Authorization: Bearer <auth_token>` em cada chamada. Deixe de fora se o seu webhook não exigir autenticação (ou usar outro mecanismo, como um segredo já embutido na própria URL).
+- A montagem da automação em si (qual serviço recebe o webhook, qual modelo de IA usar, o prompt, eventuais múltiplos provedores de IA como reserva um do outro) é decidida e mantida inteiramente por você, fora deste app — não há nenhuma tela dentro do painel para isso.
+
+### Privacidade dos dados enviados
+
+- Cada clique em "Analisar com IA" envia só os dados **daquele gráfico específico**, já filtrados como estão na tela naquele momento — não o arquivo inteiro importado.
+- Em qualquer gráfico com uma coluna de Responsável, os **nomes reais nunca são enviados** para o webhook — o app troca cada nome por um rótulo genérico ("Colaborador 1", "Colaborador 2"...) antes de montar a requisição, sempre o mesmo rótulo para a mesma pessoa dentro de uma mesma análise. O gráfico na tela continua mostrando os nomes reais normalmente; só o que viaja para fora do app é anonimizado.
+- Cada análise gerada com sucesso fica registrada em Administração → Logs do Sistema → "🗂️ Ações no Painel" (quem pediu, qual gráfico) — mas se algo der errado (webhook fora do ar, resposta num formato inesperado, tempo de espera esgotado — até cerca de 75 segundos), a pessoa usando o app só vê uma mensagem de erro amigável na hora; nada é registrado nos Logs do Sistema por essa falha específica.
+
+## 14. Construtor de gráfico personalizado
 
 Mais abaixo no dashboard, a seção **"Monte seu gráfico personalizado"** deixa você montar um gráfico do zero, para perguntas que não têm um gráfico fixo pronto:
 
@@ -231,7 +260,7 @@ Mais abaixo no dashboard, a seção **"Monte seu gráfico personalizado"** deixa
 
 Clique em **Gerar gráfico**. O gráfico gerado também é recalculado automaticamente se você mudar os filtros da barra lateral depois.
 
-## 14. Gerar o relatório em PDF
+## 15. Gerar o relatório em PDF
 
 No final da página do dashboard, a seção **"Relatório completo em PDF"** tem o botão **📄 Gerar PDF do relatório**. Ele monta um PDF com os KPIs e todos os gráficos visíveis na tela naquele momento — com os mesmos filtros aplicados e o mesmo tipo de gráfico escolhido em cada seção (inclusive o gráfico personalizado, se você já tiver gerado um).
 
@@ -241,12 +270,12 @@ No final da página do dashboard, a seção **"Relatório completo em PDF"** tem
 - Conteúdo dentro de um expansor recolhido (como a tabela de dados detalhados) não entra no PDF.
 - Se a geração falhar (situação rara, geralmente falta de navegador disponível no ambiente), uma mensagem de erro explica o motivo — o resto do dashboard continua funcionando normalmente.
 
-## 15. "Nova Análise" e "Sair"
+## 16. "Nova Análise" e "Sair"
 
 - **🔄 Nova Análise** (barra lateral, aparece só depois de já ter processado um arquivo) — limpa o arquivo importado e todos os indicadores/gráficos/filtros gerados a partir dele (inclusive o gráfico personalizado), para você importar um arquivo novo sem precisar dar F5. Pede confirmação antes de aplicar. Sua sessão continua logada, e a organização/projeto/query do Azure DevOps já configurados (se você usa a busca automática) não são apagados.
 - **Sair** (final da barra lateral) — encerra sua sessão de verdade.
 
-## 16. Perguntas frequentes
+## 17. Perguntas frequentes
 
 **Um gráfico não aparece no dashboard. Por quê?**
 Ele depende de um campo que não foi mapeado no seu arquivo (ex.: sem "Coluna do Board" mapeada, os gráficos de board não aparecem), ou é um dos dois gráficos exclusivos da busca por PAT. Volte em "Importar Dados" e confira o mapeamento, ou aceite que aquele indicador simplesmente não se aplica a esse arquivo.
@@ -262,3 +291,9 @@ Hoje o painel reconhece só o usuário `admin` como administrador de verdade —
 
 **Esqueci o código de acesso ao conteúdo administrativo de "Sobre o App".**
 Sem problema — volte na seção 4, o código atual aparece na tela para você reler ou trocar a qualquer momento.
+
+**O botão "Analisar com IA" não aparece em nenhum gráfico.**
+Confirme se a seção `[n8n]` (pelo menos `webhook_url`) está configurada nos Secrets (ver seção 13) — sem ela, o botão simplesmente não aparece em lugar nenhum, para ninguém, mesmo você.
+
+**A análise por IA respondeu, mas sem texto reconhecível (ou com erro).**
+A mensagem de erro mostrada inclui um trecho do corpo bruto que o webhook devolveu — normalmente aponta se o problema é formato de resposta inesperado, credencial de algum provedor de IA configurado na sua automação, ou timeout (o app espera até cerca de 75 segundos). Como o app não sabe o que acontece do lado de dentro do webhook (seção 13), o diagnóstico mais detalhado precisa ser feito direto na sua automação.

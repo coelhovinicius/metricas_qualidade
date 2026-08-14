@@ -600,6 +600,20 @@ def _sec_catalogo_graficos() -> None:
         ("Gerar PDF do Relatório", "Reaproveita exatamente os gráficos já visíveis na tela (nada dentro de expansores recolhidos entra no PDF)."),
     ])
 
+    st.markdown("<br>", unsafe_allow_html=True)
+    _callout(
+        "🤖 <strong>Analisar com IA.</strong> Logo abaixo de praticamente todo gráfico acima (Dashboard "
+        "e Scrum & Sprints) existe um botão \"Analisar com IA\", que gera um texto explicando o que os "
+        "dados daquele gráfico mostram, pontos de atenção e uma sugestão prática - já considerando os "
+        "filtros aplicados na tela naquele momento. É um recurso opcional: depende de uma automação de "
+        "IA configurada pela administração (fora do app) e simplesmente não aparece se ainda não "
+        "estiver disponível no seu ambiente. Em qualquer gráfico com uma coluna de Responsável, os "
+        "nomes reais NUNCA são enviados para a IA - só rótulos genéricos (\"Colaborador 1\", "
+        "\"Colaborador 2\"...), sempre o mesmo rótulo para a mesma pessoa dentro de uma mesma análise. "
+        "O gráfico na tela continua mostrando os nomes reais normalmente; só o que viaja para a IA é "
+        "anonimizado."
+    )
+
 
 def _sec_administracao() -> None:
     st.caption("Visível só para quem faz login como usuário `admin`. Tem três partes (uma aba para cada):")

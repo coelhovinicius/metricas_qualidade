@@ -89,3 +89,35 @@ def aplicar_filtros_sidebar(
             df_filtrado = df_filtrado[df_filtrado[mapeamento.status].astype(str).isin(status_selecionados)]
 
     return df_filtrado
+
+
+def resumir_filtros_ativos() -> list[str]:
+    """
+    Descreve, em texto simples, os filtros aplicados no momento (mesmas
+    chaves de `st.session_state` lidas em `aplicar_filtros_sidebar`, acima -
+    compartilhadas entre Dashboard e Scrum & Sprints, já que as duas páginas
+    usam os mesmos widgets). Usado onde for útil explicar "com quais filtros
+    isto foi gerado": hoje, no cabeçalho do relatório em PDF
+    (`ui/pages/dashboard_page.py`) e no contexto enviado para a análise por
+    IA de um gráfico (`ui/analise_grafico.py`) - centralizado aqui (em vez de
+    duplicado em cada página) para as duas leituras nunca ficarem
+    dessincronizadas entre si.
+    """
+    linhas = []
+    data_inicio = st.session_state.get("filtro_data_inicio")
+    data_fim = st.session_state.get("filtro_data_fim")
+    if data_inicio and data_fim:
+        linhas.append(f"Período: {data_inicio.strftime('%d/%m/%Y')} a {data_fim.strftime('%d/%m/%Y')}")
+
+    for chave_estado, rotulo in (
+        ("filtro_projeto", "Projeto"),
+        ("filtro_sprint", "Sprint"),
+        ("filtro_tipo_teste", "Tipos de Teste"),
+        ("filtro_status", "Status"),
+    ):
+        selecionados = st.session_state.get(chave_estado)
+        if selecionados:
+            texto = ", ".join(selecionados) if len(selecionados) <= 6 else f"{len(selecionados)} selecionados"
+            linhas.append(f"{rotulo}: {texto}")
+
+    return linhas

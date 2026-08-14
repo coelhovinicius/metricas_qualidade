@@ -250,8 +250,9 @@ def _montar_story() -> list:
         ("4. Como montar a query no Azure DevOps (para os gráficos funcionarem)", toc_item),
         ("5. Confirmar o mapeamento de colunas", toc_item),
         ("6. Navegando no Painel de Indicadores", toc_item),
-        ("7. Gerando o relatório em PDF", toc_item),
-        ("8. Perguntas frequentes", toc_item),
+        ("7. Analisar um gráfico com IA (opcional)", toc_item),
+        ("8. Gerando o relatório em PDF", toc_item),
+        ("9. Perguntas frequentes", toc_item),
     ]
     for texto_item, estilo_item in sumario:
         story.append(Paragraph(texto_item, estilo_item))
@@ -488,8 +489,39 @@ def _montar_story() -> list:
     ))
     story.append(PageBreak())
 
-    # ---- 7. PDF ----
-    story.append(Paragraph("7. Gerando o relatório em PDF", h1))
+    # ---- 7. Análise por IA ----
+    story.append(Paragraph("7. Analisar um gráfico com IA (opcional)", h1))
+    story.append(Paragraph(
+        "Logo abaixo de praticamente todo gráfico (no Painel de Indicadores e em Scrum & "
+        "Sprints) existe um botão <b>\"🤖 Analisar com IA\"</b>. Ele gera, na hora, um texto "
+        "explicando o que os dados daquele gráfico específico mostram — considerando os filtros "
+        "que você já aplicou na tela naquele momento —, pontos de atenção e uma sugestão "
+        "prática.",
+        body,
+    ))
+    story.append(passo("1", "Clique em \"🤖 Analisar com IA\", logo abaixo do gráfico", "A tela fica bloqueada com um aviso de carregamento por alguns segundos, enquanto a análise é gerada."))
+    story.append(passo("2", "O texto aparece num cartão, logo abaixo do botão", "Com o título \"🤖 Análise por IA\"."))
+    story.append(passo("✓", "Clique em \"Limpar análise\" para gerar de novo", "Útil, por exemplo, depois de mudar um filtro na barra lateral."))
+    story.append(callout(
+        "Este recurso é <b>opcional</b> e depende de uma automação de IA configurada pela pessoa "
+        "administradora, por fora do app — se ainda não estiver configurada no seu ambiente, o "
+        "botão simplesmente não aparece em nenhum gráfico. Se você acha que deveria estar "
+        "disponível e não está, avise a pessoa administradora.",
+        "dica",
+    ))
+    story.append(Spacer(1, 4))
+    story.append(callout(
+        "<b>Privacidade:</b> em qualquer gráfico com uma coluna de Responsável, os nomes reais "
+        "<b>nunca</b> são enviados para a IA — só rótulos genéricos (\"Colaborador 1\", "
+        "\"Colaborador 2\"...), sempre o mesmo rótulo para a mesma pessoa dentro de uma mesma "
+        "análise. O gráfico continua mostrando os nomes reais normalmente na sua tela; só o que "
+        "é enviado para a IA é anonimizado.",
+        "ok",
+    ))
+    story.append(PageBreak())
+
+    # ---- 8. PDF ----
+    story.append(Paragraph("8. Gerando o relatório em PDF", h1))
     story.append(Paragraph(
         "No final da página do dashboard, a seção \"Relatório completo em PDF\" monta um PDF "
         "com os KPIs e todos os gráficos visíveis na tela naquele momento — com os mesmos "
@@ -506,14 +538,15 @@ def _montar_story() -> list:
     ))
     story.append(PageBreak())
 
-    # ---- 8. FAQ ----
-    story.append(Paragraph("8. Perguntas frequentes", h1))
+    # ---- 9. FAQ ----
+    story.append(Paragraph("9. Perguntas frequentes", h1))
     faq = [
         ("Esqueci minha senha.", "Fale com a pessoa administradora — a redefinição é feita por ela; não existe \"esqueci minha senha\" automático."),
         ("Um gráfico que eu esperava ver não aparece.", "Ele depende de um campo que não foi mapeado (ou, no caso dos dois gráficos exclusivos do PAT, não está disponível via CSV — ver seção 6). Volte em \"Importar Dados\" e confira o mapeamento."),
         ("Meu PAT do Azure DevOps é seguro para usar aqui?", "Sim — nunca é salvo em disco/banco/configurações do app; fica só na memória da sua sessão de navegador e some ao sair."),
         ("Preciso pedir acesso de novo se meu login parar de funcionar?", "Não necessariamente — confirme primeiro com a pessoa administradora se sua conta ainda existe/está ativa."),
         ("Importar um arquivo novo apaga o anterior?", "Sim, sempre substitui — não acumula dados de importações diferentes."),
+        ("Não vejo o botão \"Analisar com IA\" em nenhum gráfico.", "Esse recurso depende de uma automação configurada pela pessoa administradora, por fora do app — sem ela configurada, o botão simplesmente não aparece em lugar nenhum. Confirme com a pessoa administradora se o recurso está habilitado no seu ambiente."),
     ]
     for pergunta, resposta in faq:
         story.append(KeepTogether([

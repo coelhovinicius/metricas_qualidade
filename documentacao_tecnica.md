@@ -15,14 +15,15 @@ Este documento explica, em detalhe, **tudo que é usado para montar e fazer func
 7. [Importação de dados — três fontes](#7-importação-de-dados-três-fontes)
 8. [Detecção e mapeamento de colunas](#8-detecção-e-mapeamento-de-colunas)
 9. [Regras de negócio (indicadores e gráficos)](#9-regras-de-negócio-indicadores-e-gráficos)
-10. [Geração de PDF](#10-geração-de-pdf)
-11. [Banco de dados: Turso](#11-banco-de-dados-turso)
-12. [Fuso horário](#12-fuso-horário)
-13. [Hospedagem e deploy](#13-hospedagem-e-deploy)
-14. [Segurança — visão consolidada](#14-segurança-visão-consolidada)
-15. [Convenções e padrões de código](#15-convenções-e-padrões-de-código)
-16. [Mapa de arquivos](#16-mapa-de-arquivos)
-17. [Glossário](#17-glossário)
+10. [Análise de gráfico por IA (n8n)](#10-análise-de-gráfico-por-ia-n8n)
+11. [Geração de PDF](#11-geração-de-pdf)
+12. [Banco de dados: Turso](#12-banco-de-dados-turso)
+13. [Fuso horário](#13-fuso-horário)
+14. [Hospedagem e deploy](#14-hospedagem-e-deploy)
+15. [Segurança — visão consolidada](#15-segurança-visão-consolidada)
+16. [Convenções e padrões de código](#16-convenções-e-padrões-de-código)
+17. [Mapa de arquivos](#17-mapa-de-arquivos)
+18. [Glossário](#18-glossário)
 
 ---
 
@@ -37,7 +38,7 @@ Camadas do projeto, de fora para dentro:
 - **`core/`** — regras de negócio, puras (a maioria dos módulos aqui não sabe que existe uma interface por cima — só recebe dados, processa, devolve resultado ou levanta um erro com mensagem amigável). É a camada testável/reaproveitável.
 - **`auth/`** — autenticação e sessão.
 - **`utils/`** — utilitários transversais (hoje, só inicialização/limpeza do `st.session_state`).
-- **Serviços externos**: um banco de dados (Turso), duas APIs de terceiros (Azure DevOps, Google Drive) — nenhum obrigatório para o app subir; cada ausência de configuração desliga só a funcionalidade correspondente, com uma mensagem clara, sem derrubar o resto.
+- **Serviços externos**: um banco de dados (Turso), duas APIs de terceiros (Azure DevOps, Google Drive) e um webhook de automação (n8n, para a análise de gráfico por IA — ver seção 10) — nenhum obrigatório para o app subir; cada ausência de configuração desliga só a funcionalidade correspondente, com uma mensagem clara, sem derrubar o resto.
 
 Não há back-end/API separado: o próprio processo Streamlit atende requisições HTTP do navegador (usa o servidor web embutido do Streamlit, hoje baseado em Starlette/Tornado internamente) e executa a lógica de negócio no mesmo processo, síncrono. Não há fila de tarefas, worker separado, nem cache distribuído — para a escala de uma ferramenta interna de equipe, a simplicidade de um único processo foi a escolha deliberada.
 
@@ -57,7 +58,7 @@ Gerenciamento de dependências via `pip` + `requirements.txt` (sem Poetry/pipenv
 - **HTML/CSS customizado**: para elementos que o Streamlit não oferece prontos (cabeçalho com logo, cartões de KPI, os diagramas de fluxo em "Sobre o App", badges de status), o código usa `st.markdown(..., unsafe_allow_html=True)` com classes CSS próprias, todas centralizadas em `ui/theme.py` (injetadas uma vez, via `injetar_css_global()`, no início de `app.py`). Os fluxogramas da página "Sobre o App" combinam duas técnicas: cartões em HTML/CSS puro (como o resto da interface, herdando a mesma paleta/fonte, sem dependência nova, recalculados a cada carregamento de página) e uma **imagem** (retângulos + setas, estilo tradicional de diagrama de fluxo), gerada com Graphviz (`core/gerador_fluxograma.py`) - mas raramente, não a cada carregamento: o resultado fica gravado no banco de dados (Turso, via o botão "🔄 Gerar/Atualizar fluxograma agora" em Administração) ou em `assets/` (fallback local, via `scripts/gerar_fluxograma_diagrama.py`), e a página só serve o PNG já pronto. Ver a seção "Mantendo o fluxograma em dia" do `README.md` para os dois caminhos de regeração.
 - **Cuidado com HTML multilinha em `st.markdown`**: o parser de Markdown do Streamlit segue as regras do CommonMark, em que uma linha em branco (ou só com espaços) NO MEIO de um bloco HTML manualmente escrito é interpretada como o **fim** desse bloco — todo o conteúdo HTML seguinte passa a ser lido como texto puro (aparece na tela como um bloco de código, com as tags visíveis em vez de renderizadas). Isso já aconteceu de verdade neste projeto: funções que montavam HTML juntando vários pedaços em várias linhas indentadas (um cartão por item de uma lista, por exemplo) geravam, sem querer, uma linha em branco na junção entre um pedaço e o próximo. A correção, aplicada em `ui/components.py::render_header` e nos montadores de diagrama de `ui/pages/sobre_page.py` (`_bifurcacao`, `_catalogo_categoria`), foi montar cada trecho de HTML como uma única linha contínua, sem nenhuma quebra de linha no meio — elimina o risco por completo, independente de quantos pedaços forem concatenados depois.
 - **Diálogos modais** (`@st.dialog(...)`) — usados para toda confirmação de ação destrutiva ou irreversível (revogar acesso, excluir solicitação, nova análise), sempre com um resumo do que vai acontecer antes de aplicar de verdade.
-- **`st.secrets`** — mecanismo nativo do Streamlit para configuração sensível (ver seção 4 e 14): lido em produção do painel do Streamlit Community Cloud, e localmente de `.streamlit/secrets.toml` (nunca commitado).
+- **`st.secrets`** — mecanismo nativo do Streamlit para configuração sensível (ver seção 4 e 15): lido em produção do painel do Streamlit Community Cloud, e localmente de `.streamlit/secrets.toml` (nunca commitado).
 
 ## 4. Autenticação e sessão
 
@@ -103,7 +104,7 @@ A UI dessa busca (cascata PAT → Organização → Projeto → Area Path(s) opc
 
 Usa **[`google-api-python-client`](https://github.com/googleapis/google-api-python-client)** + **[`google-auth`](https://github.com/googleapis/google-auth-library-python)** para falar com a **API do Google Drive**, autenticado por uma **Conta de Serviço** (uma credencial "robô" — arquivo JSON com uma chave privada, sem tela de login interativa; ver `Configurar Google Drive.md` para o passo a passo de criação). A credencial é lida de `st.secrets["google_drive"]` em produção, ou de um arquivo local `core/google_drive_credentials.json` (nunca versionado). Funções principais: `listar_pastas_e_arquivos_csv` (lista o conteúdo de uma pasta, separando subpastas de arquivos `.csv`), `baixar_arquivo_csv` (baixa os bytes de um arquivo específico), `extrair_id_pasta_do_link` (aceita tanto a URL completa quanto só o ID da pasta, colados pelo usuário), `testar_conexao` (usado tanto no diagnóstico do admin quanto na hora de salvar a pasta de cada usuário, para confirmar acesso antes de gravar).
 
-A pasta em si é uma configuração **por usuário**, não da aplicação — guardada no banco de dados (ver seção 11) com uma chave por `nome_usuario`, para que cada pessoa logada configure e enxergue só a própria pasta.
+A pasta em si é uma configuração **por usuário**, não da aplicação — guardada no banco de dados (ver seção 12) com uma chave por `nome_usuario`, para que cada pessoa logada configure e enxergue só a própria pasta.
 
 ## 8. Detecção e mapeamento de colunas
 
@@ -125,14 +126,24 @@ O resultado nunca é aplicado silenciosamente — sempre passa por uma tela de c
 
 `velocidade_por_sprint_pontos` é a Velocity clássica do Scrum (soma de Story Points concluídos por sprint), espelhando a mesma aproximação de ordem cronológica de `itens_concluidos_por_sprint` (pela data mais antiga entre os itens concluídos de cada sprint). Um detalhe deliberado: o eixo de sprints é construído a partir de TODOS os itens concluídos com Sprint válido — não só os que têm Story Points preenchido — então um sprint que entregou itens mas não tem nenhum com esforço estimado aparece com 0 pontos, em vez de sumir do eixo (que pareceria "esse sprint não existe" em vez de "esse sprint não tem esforço registrado"). `cobertura_story_points` calcula, para o mesmo recorte de dados, quantos itens de entrega têm Story Points preenchido (campo manual do Azure DevOps, preenchido durante planejamento/refinamento) — `ui/pages/scrum_page.py` usa esse percentual pra decidir quando mostrar um `st.warning` explícito acima do gráfico (limiar `_LIMIAR_COBERTURA_STORY_POINTS_BAIXA = 30%`), evitando que uma Velocity baixa seja lida como "o time entregou pouco" quando na real é "a maioria dos itens não tem esforço estimado".
 
-## 10. Geração de PDF
+## 10. Análise de gráfico por IA (n8n)
+
+O botão **"🤖 Analisar com IA"**, disponível em praticamente todo gráfico do Dashboard e de Scrum & Sprints, gera sob demanda um texto de análise via uma automação externa (**[n8n](https://n8n.io/)**), em vez de chamar diretamente uma API de IA (OpenAI/Gemini/etc.) — decisão de projeto: reaproveitar um fluxo n8n já mantido pela equipe, com as chaves/créditos de IA já em uso noutros contextos, sem duplicar gerenciamento de chave de API dentro deste app. Qual modelo de IA é usado, o prompt exato, e qualquer fallback entre provedores é responsabilidade inteiramente do fluxo n8n configurado — este app só envia os dados de UM gráfico e devolve o texto que o webhook responder.
+
+- **`core/n8n_client.py`** — cliente HTTP minimalista (`requests`), sem SDK. `analisar_grafico(...)` monta um corpo JSON (`titulo`, `descricao`, `tipo_grafico`, `dados`, `contexto`) e faz um `POST` para `st.secrets["n8n"]["webhook_url"]` (com `Authorization: Bearer <auth_token>` opcional), timeout de 75s. `_tornar_serializavel(...)` converte recursivamente tipos do pandas/numpy (`Timestamp`, `NaT`, `int64`/`float64`/`bool_`, `NaN`) para tipos nativos do Python antes do envio — sem isso, `requests.post(json=...)` (que usa `json.dumps` puro) quebra com `TypeError` ao serializar qualquer valor vindo direto de um `DataFrame`/agregação pandas. `_extrair_texto_analise(...)` procura o texto da resposta numa lista de chaves conhecidas (`analise`, `resposta`, `texto`, `text`, `output`, `message`), aceita tanto uma string solta quanto um dict aninhado até 2 níveis (`_buscar_texto_em_dict`, para o formato comum de node "Basic LLM Chain" do n8n com parser de saída estruturada, ex.: `{"output": {"analise": "..."}}`) — e, na ausência de texto reconhecível, `N8nError` inclui um trecho (até 4000 caracteres) do corpo bruto da resposta, para diagnóstico sem precisar abrir a aba Executions do n8n.
+- **`ui/analise_grafico.py`** (`renderizar_botao_analise_ia`) — componente reutilizável chamado por qualquer seção de gráfico (`ui/pages/dashboard_page.py`, `ui/pages/scrum_page.py`), bastando uma `chave` única por gráfico (usada tanto para o botão quanto para guardar o resultado em `st.session_state`, sobrevivendo a reruns até ser limpo). Segue o mesmo padrão `action_button`/`loading_overlay`/`finish_action` já usado pelo relatório em PDF (`ui/components.py`), para impedir duplo clique enquanto a análise está em andamento.
+- **Anonimização de responsáveis** (`_anonimizar_responsaveis`, em `ui/analise_grafico.py`) — antes de qualquer envio, nomes reais na coluna "Responsável" (tanto em `dados` quanto em qualquer lista dentro de `contexto_extra`) são trocados por rótulos genéricos ("Colaborador 1", "Colaborador 2"...), com o MESMO mapeamento reaproveitado nas duas estruturas dentro de uma mesma chamada — decisão de projeto: a IA nunca deve saber quem é quem, nem para elogiar nem para apontar risco. O gráfico na tela continua usando os nomes reais normalmente; só o payload enviado ao n8n é anonimizado.
+- **Correção de viés "retrato atual vs. esforço real"** — o gráfico "Carga de Trabalho em Aberto por Responsável" (`scrum_page.py`) complementa o payload com `contexto_extra["itens_concluidos_ultimos_30_dias_por_responsavel"]` (via `analytics.filtrar_itens_em_aberto` + complemento de conjunto + corte de 30 dias + `analytics.volume_por_responsavel`), para que um número baixo de itens em aberto não seja lido pela IA como "trabalhando pouco" quando, na verdade, reflete alto volume concluído recentemente — o prompt configurado no n8n é instruído a cruzar essa informação sempre que presente, para qualquer gráfico que represente um retrato do momento atual (aberto/WIP/backlog).
+- **Sem configuração** (`[n8n]` ausente dos Secrets) o botão simplesmente não aparece em nenhum gráfico — mesmo padrão de degradação graciosa das outras integrações opcionais (Google Drive, Turso).
+
+## 11. Geração de PDF
 
 Duas gerações de PDF completamente independentes no projeto, ambas usando **[`reportlab`](https://www.reportlab.com/opensource/)** (biblioteca Python para montar documentos PDF programaticamente, via API "Platypus": `SimpleDocTemplate`, `Paragraph`, `Table`, `TableStyle`, `Spacer`, `PageBreak` etc.):
 
 - **Relatório do dashboard** (`core/pdf_report.py`) — monta um PDF com os KPIs e todos os gráficos visíveis na tela. Como o Plotly desenha gráficos interativos (HTML/JS), eles precisam ser convertidos para imagem estática antes de entrar num PDF — isso é feito por **[`kaleido`](https://github.com/plotly/Kaleido)** (`fig.to_image(format="png", ...)`), que por trás das cortinas abre um navegador Chrome/Chromium sem interface (headless) para renderizar e capturar cada gráfico como PNG. A versão usada (`>=1.0`) não vem com navegador embutido — ela procura um Chrome/Chromium/Edge/Brave já instalado no sistema, e só baixa um binário próprio ("Chrome for Testing") se não achar nenhum.
 - **Guia Completo do Usuário** (`core/gerador_guia_pdf.py`) — mesma biblioteca (reportlab), uso completamente independente: monta um PDF só de texto/tabelas/passos numerados (sem nenhum gráfico Plotly, então não depende de `kaleido`/Chrome), com o conteúdo de onboarding do usuário. Gerado em memória (`io.BytesIO`, sem tocar em disco) pela função `gerar_pdf_bytes()`, reaproveitada tanto pelo botão de Administração quanto pelo script de linha de comando `scripts/gerar_guia_usuario_pdf.py`.
 
-## 11. Banco de dados: Turso
+## 12. Banco de dados: Turso
 
 **[Turso](https://turso.tech/)** é um serviço de **SQLite hospedado**, acessado aqui por uma **API HTTP simples** (`core/turso_client.py`, usando só `requests` — sem driver/SDK nativo), no formato "pipeline" documentado pela Turso: cada chamada envia um comando SQL e recebe de volta linhas em JSON. Essa escolha (HTTP puro, sem SDK) evita instalar um driver de banco compilado, o que simplifica o deploy no Streamlit Community Cloud.
 
@@ -144,28 +155,29 @@ Três usos, todos no mesmo banco, cada um com sua própria tabela criada sozinha
 
 Sem a seção `[turso]` configurada nos Secrets, essas três áreas ficam indisponíveis (com mensagem de erro clara) — o resto do app (login local via `auth/users.yaml`, importação, dashboard) funciona normalmente sem depender do banco.
 
-## 12. Fuso horário
+## 13. Fuso horário
 
 `core/fuso_horario.py` centraliza a conversão para o horário de Brasília (`America/Sao_Paulo`, UTC-3 fixo — sem horário de verão desde 2019) usando **`zoneinfo`** (biblioteca padrão do Python, sem dependência externa). Existe porque três fontes de data/hora do projeto usam fusos diferentes por padrão: `datetime.now()` do Python usa o fuso do servidor onde o app está rodando (não é garantido ser o do Brasil), a API do Azure DevOps devolve tudo em UTC, e o SQLite/Turso grava `datetime('now')` sempre em UTC. Duas funções: `formatar_data_hora_brasil` (para timestamps, com conversão de fuso) e `formatar_data_brasil` (para datas puras, sem horário — sem conversão de fuso, para não arriscar mudar o dia por causa do deslocamento).
 
-## 13. Hospedagem e deploy
+## 14. Hospedagem e deploy
 
 - **Principal: [Streamlit Community Cloud](https://streamlit.io/cloud)** — hospedagem gratuita oficial do Streamlit, publica automaticamente a partir do repositório Git. Dois arquivos controlam o ambiente além do código: `requirements.txt` (dependências Python) e `packages.txt` (dependências de sistema via `apt-get` — hoje só `chromium`, necessário para o `kaleido` conseguir abrir um navegador dentro do container minimalista do Streamlit Cloud).
 - **Alternativa (fallback): Docker**, documentado em `FALLBACK_DEPLOY.md` — o mesmo código, sem nenhuma alteração, roda dentro de um container Docker (`Dockerfile`/`docker-entrypoint.sh`/`.dockerignore`), hospedável em **Hugging Face Spaces** (recomendado — gratuito, sem limite de horas) ou **Render**. A única diferença prática é como os Secrets chegam ao app: em vez do painel do Streamlit Cloud, uma variável de ambiente `SECRETS_TOML` é gravada pelo `docker-entrypoint.sh` num arquivo `.streamlit/secrets.toml` dentro do container, no início da execução — o restante do código não percebe diferença nenhuma.
 
-## 14. Segurança — visão consolidada
+## 15. Segurança — visão consolidada
 
 Resumo transversal (cada ponto já é mencionado, com mais contexto, na seção correspondente acima e no [README](README.md#segurança-e-privacidade)):
 
 - **Senhas** de usuários: hash bcrypt, nunca texto puro, vivem nos Secrets do Streamlit (nunca no Git).
 - **PAT do Azure DevOps**: nunca persistido (nem disco, nem banco, nem Secrets) — só memória de sessão, por usuário, some ao sair.
 - **Credencial de conta de serviço do Google Drive**: só nos Secrets/arquivo local ignorado pelo Git — nunca passa pela tela do app. É compartilhada (uma só para todo o app), mas a pasta configurada por cada usuário é individual e privada dele.
+- **Webhook n8n da análise por IA**: URL e token (opcional) só nos Secrets — nunca no Git. Cada análise envia só os dados do gráfico específico já filtrados na tela (não o arquivo inteiro), e nomes de Responsável são sempre trocados por rótulos genéricos antes do envio (ver seção 10) — a IA nunca recebe um nome real.
 - **Código de acesso ao conteúdo administrativo de "Sobre o App"**: deliberadamente **não** é uma segunda camada de autenticação — é só um seletor de conteúdo informativo, guardado como configuração comum. Não protege nenhuma ação real, só a visibilidade de um texto explicativo.
 - **PDF do Guia do Usuário**: por ser baixável livremente por qualquer pessoa logada (para poder ser repassado a qualquer usuário novo), o conteúdo é escrito sem nenhum dado específico deste ambiente — nenhuma credencial, nenhum e-mail de conta de serviço real, nenhuma URL de organização, e sem o nome comercial do produto.
 - **Logs e solicitações de acesso**: visíveis só dentro do Painel Administrativo, sem nenhum envio automático (e-mail, webhook) para fora do app.
 - **Erros não tratados**: capturados centralmente em `app.py` (`try/except` ao redor da renderização de cada página) — o usuário final vê uma mensagem genérica, o traceback completo vai só para o log técnico (visível ao admin).
 
-## 15. Convenções e padrões de código
+## 16. Convenções e padrões de código
 
 - **Nomenclatura em português** em quase todo o código (funções, variáveis, comentários) — só nomes de bibliotecas/APIs externas e alguns termos técnicos sem tradução natural (`session_state`, `DataFrame`) ficam em inglês.
 - **Funções "privadas"** de cada módulo começam com `_` (convenção do Python, não impõe restrição de verdade, mas sinaliza "não chame isso de fora deste arquivo").
@@ -174,13 +186,15 @@ Resumo transversal (cada ponto já é mencionado, com mais contexto, na seção 
 - **`@st.dialog`**: toda ação destrutiva ou irreversível passa por um modal de confirmação antes de aplicar.
 - **Docstrings extensas**: os módulos deste projeto tendem a explicar **por que** uma decisão foi tomada (não só o quê o código faz) diretamente no docstring da função/módulo — decisões de design, bugs específicos já enfrentados e evitados, e trade-offs considerados ficam documentados no próprio código-fonte, para quem for mexer depois não repetir um erro já resolvido.
 
-## 16. Mapa de arquivos
+## 17. Mapa de arquivos
 
 Ver [Estrutura do projeto](README.md#estrutura-do-projeto) no README para a árvore completa de arquivos comentada.
 
-## 17. Glossário
+## 18. Glossário
 
 - **PAT (Personal Access Token)**: um token de acesso pessoal, gerado pelo próprio usuário no Azure DevOps, que funciona como uma senha temporária e restrita (só leitura de work items, neste caso) para uma aplicação acessar uma API em nome dele, sem usar a senha de verdade.
+- **n8n**: ferramenta de automação de fluxos ("workflow automation") usada aqui só para a análise de gráfico por IA (ver seção 10) — recebe os dados de um gráfico via webhook, decide qual IA chamar e com qual prompt, e devolve o texto de análise. Mantida e configurada inteiramente fora deste app.
+- **Webhook**: uma URL que, ao receber uma requisição HTTP (aqui, um `POST` com os dados de um gráfico), dispara uma automação do lado de quem a hospeda — é o mecanismo usado para acionar o fluxo n8n da análise por IA.
 - **Conta de serviço (service account)**: um tipo de credencial do Google Cloud que representa uma "identidade robô" (não uma pessoa) — usada aqui para o app conseguir ler arquivos do Google Drive sem depender do login pessoal de ninguém.
 - **Work item**: o termo do Azure DevOps para qualquer item rastreável (caso de teste, bug, tarefa, etc.).
 - **Area Path**: campo hierárquico do Azure DevOps usado para organizar work items por projeto/time/módulo (ex.: `Produto\Módulo\Time`).

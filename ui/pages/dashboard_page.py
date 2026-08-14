@@ -10,11 +10,14 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
+from auth.auth_manager import AuthManager
 from core import analytics
 from core.column_mapper import MapeamentoColunas
 from core.fuso_horario import agora_brasilia
+from ui.analise_grafico import renderizar_botao_analise_ia
 from ui.components import action_button, finish_action, loading_overlay, render_header, render_kpi_row
 from ui.filtros_dashboard import aplicar_filtros_sidebar as _aplicar_filtros_sidebar
+from ui.filtros_dashboard import resumir_filtros_ativos
 from ui.graficos import (
     TIPOS_GRAFICO_PADRAO,
     FilaGraficos as _FilaGraficos,
@@ -213,6 +216,13 @@ def render_dashboard_page() -> None:
                 titulo="Distribuição de Status" if not status_binario else "Passou vs. Não Passou",
                 secoes_pdf=secoes_pdf,
             )
+            renderizar_botao_analise_ia(
+                chave="status_geral",
+                titulo="Distribuição de Status" if not status_binario else "Passou vs. Não Passou",
+                descricao="Quantidade de itens em cada valor de Status, como veio do campo de Status do Azure DevOps.",
+                tipo_grafico=tipo_status.lower(), dados=resumo_status,
+                nome_usuario=AuthManager.current_username(),
+            )
         fila.adicionar(_sec_status_geral)
 
     # ------------------------------------------------- Area Path × Status
@@ -235,6 +245,13 @@ def render_dashboard_page() -> None:
                 _plotar(
                     df_area_x_status, tipo_area_status, x="Projeto", y="Quantidade", chave="area_path_status", cor="Status",
                     titulo="Area Path × Status", secoes_pdf=secoes_pdf,
+                )
+                renderizar_botao_analise_ia(
+                    chave="area_path_status",
+                    titulo="Area Path × Status",
+                    descricao="Quantidade de itens por Area Path/Projeto, discriminados por valor de Status.",
+                    tipo_grafico=tipo_area_status.lower(), dados=df_area_x_status,
+                    nome_usuario=AuthManager.current_username(),
                 )
             fila.adicionar(_sec_area_path_status)
 
@@ -321,6 +338,26 @@ def render_dashboard_page() -> None:
                         "titulo": f"Backlog Aberto: Volume × Idade × Risco (por {rotulo_agrupamento_bolha})",
                         "fig": fig_backlog_bolha,
                     })
+
+                renderizar_botao_analise_ia(
+                    chave="dashboard_backlog_bolha",
+                    titulo=f"Backlog Aberto: Volume × Idade × Risco (por {rotulo_agrupamento_bolha})",
+                    descricao=(
+                        "Backlog aberto agrupado por "
+                        f"{rotulo_agrupamento_bolha}: volume de itens em aberto, idade média "
+                        "parado e percentual de itens Severidade Alta/Crítica em cada grupo."
+                    ),
+                    tipo_grafico="bolha (volume x idade x risco)" if tipo_backlog_bolha == "Bolha (Volume × Idade × Risco)" else tipo_backlog_bolha.lower(),
+                    dados=df_backlog_bolha,
+                    contexto_extra={
+                        "agrupado_por": rotulo_agrupamento_bolha,
+                        "total_itens_em_aberto": indicadores_backlog.total_abertos,
+                        "idade_media_dias_geral": indicadores_backlog.idade_media_dias,
+                        "parados_ha_mais_de_90_dias": indicadores_backlog.mais_90_dias,
+                        "parados_ha_mais_de_365_dias": indicadores_backlog.mais_365_dias,
+                    },
+                    nome_usuario=AuthManager.current_username(),
+                )
             else:
                 st.info("Sem dados suficientes para montar o gráfico com os filtros atuais.")
 
@@ -347,6 +384,13 @@ def render_dashboard_page() -> None:
                 df_planejamento, tipo_planejamento, x="Categoria", y="Quantidade", chave="planejamento",
                 titulo="Planejamento vs. Testes Efetivados", secoes_pdf=secoes_pdf,
             )
+            renderizar_botao_analise_ia(
+                chave="planejamento",
+                titulo="Planejamento vs. Testes Efetivados",
+                descricao="Comparação entre o que foi planejado e o que foi efetivamente testado.",
+                tipo_grafico=tipo_planejamento.lower(), dados=df_planejamento,
+                nome_usuario=AuthManager.current_username(),
+            )
         fila.adicionar(_sec_planejamento)
 
     # ------------------------------------------------------ Testes por projeto
@@ -364,6 +408,13 @@ def render_dashboard_page() -> None:
                 df_projeto, tipo_projeto, x="Projeto", y="Quantidade de Testes", chave="testes_projeto",
                 titulo="Testes por Projeto", secoes_pdf=secoes_pdf,
             )
+            renderizar_botao_analise_ia(
+                chave="testes_projeto",
+                titulo="Testes por Projeto",
+                descricao="Quantidade de testes executados, por Projeto/Area Path.",
+                tipo_grafico=tipo_projeto.lower(), dados=df_projeto,
+                nome_usuario=AuthManager.current_username(),
+            )
         fila.adicionar(_sec_testes_projeto)
 
     # ------------------------------------------------- Ranking de bugs
@@ -380,6 +431,13 @@ def render_dashboard_page() -> None:
             _plotar(
                 df_bugs, tipo_bugs, x="Projeto", y="Quantidade de Bugs", chave="bugs_projeto",
                 titulo="Ranking de Bugs por Projeto", secoes_pdf=secoes_pdf,
+            )
+            renderizar_botao_analise_ia(
+                chave="bugs_projeto",
+                titulo="Ranking de Bugs por Projeto",
+                descricao="Ranking de bugs abertos, por Projeto/Area Path.",
+                tipo_grafico=tipo_bugs.lower(), dados=df_bugs,
+                nome_usuario=AuthManager.current_username(),
             )
         fila.adicionar(_sec_bugs_projeto)
 
@@ -428,6 +486,16 @@ def render_dashboard_page() -> None:
                     df_tipo_teste, tipo_tt, x="Tipo de Teste", y="Quantidade", chave="tipo_teste",
                     titulo="Distribuição por Tipo de Teste", secoes_pdf=secoes_pdf,
                 )
+                renderizar_botao_analise_ia(
+                    chave="tipo_teste",
+                    titulo="Distribuição por Tipo de Teste",
+                    descricao=(
+                        "Distribuição de itens por Tipo de Teste (Bug, Test Case, User Story etc.), "
+                        "excluindo os tipos marcados como contêiner organizacional."
+                    ),
+                    tipo_grafico=tipo_tt.lower(), dados=df_tipo_teste,
+                    nome_usuario=AuthManager.current_username(),
+                )
             else:
                 st.info("Nenhum tipo restante depois da exclusão acima — ajuste a lista para ver o gráfico.")
         fila.adicionar(_sec_tipo_teste)
@@ -451,6 +519,13 @@ def render_dashboard_page() -> None:
             _plotar(
                 df_taxa_projeto, tipo_taxa_projeto, x="Projeto", y="Taxa de Sucesso (%)", chave="taxa_projeto",
                 titulo="Taxa de Sucesso por Projeto", secoes_pdf=secoes_pdf,
+            )
+            renderizar_botao_analise_ia(
+                chave="taxa_projeto",
+                titulo="Taxa de Sucesso por Projeto",
+                descricao="Taxa de sucesso (percentual de execuções que passaram), por Projeto/Area Path.",
+                tipo_grafico=tipo_taxa_projeto.lower(), dados=df_taxa_projeto,
+                nome_usuario=AuthManager.current_username(),
             )
         fila.adicionar(_sec_taxa_projeto)
 
@@ -489,12 +564,26 @@ def render_dashboard_page() -> None:
                             "titulo": "Tendência ao Longo do Tempo — por Projeto",
                             "fig": fig_tendencia_projeto,
                         })
+                    renderizar_botao_analise_ia(
+                        chave="tendencia_multiplos",
+                        titulo="Tendência ao Longo do Tempo — por Projeto",
+                        descricao="Evolução semanal do volume de itens ao longo do tempo, separada por Projeto.",
+                        tipo_grafico=tipo_tendencia.lower(), dados=df_tendencia_projeto,
+                        nome_usuario=AuthManager.current_username(),
+                    )
                 else:
                     st.info("Sem dados suficientes para separar por Projeto com os filtros atuais.")
             else:
                 _plotar(df_tendencia, tipo_tendencia, x="Semana", y="Quantidade", chave="tendencia",
                         cor="Status" if "Status" in df_tendencia.columns else None,
                         titulo="Tendência ao Longo do Tempo", secoes_pdf=secoes_pdf)
+                renderizar_botao_analise_ia(
+                    chave="tendencia",
+                    titulo="Tendência ao Longo do Tempo",
+                    descricao="Evolução semanal do volume de itens ao longo do tempo.",
+                    tipo_grafico=tipo_tendencia.lower(), dados=df_tendencia,
+                    nome_usuario=AuthManager.current_username(),
+                )
         fila.adicionar(_sec_tendencia)
 
     # ------------------------------------------------- Bugs abertos vs. solucionados
@@ -561,6 +650,13 @@ def render_dashboard_page() -> None:
             _plotar(df_bugs_tempo_longo, tipo_bugs_tempo, x="Semana", y="Quantidade",
                     chave="bugs_tempo", cor="Categoria",
                     titulo="Bugs Abertos vs. Solucionados", secoes_pdf=secoes_pdf)
+            renderizar_botao_analise_ia(
+                chave="bugs_tempo",
+                titulo="Bugs Abertos vs. Solucionados",
+                descricao="Bugs criados (acumulado) comparados aos que já estão em situação terminal, por semana.",
+                tipo_grafico=tipo_bugs_tempo.lower(), dados=df_bugs_tempo_longo,
+                nome_usuario=AuthManager.current_username(),
+            )
         fila.adicionar(_sec_bugs_tempo)
 
     # ------------------------------------------------- Distribuição de severidade
@@ -596,6 +692,13 @@ def render_dashboard_page() -> None:
                 mapa_cores_fixo=mapa_cores_severidade,
                 titulo="Distribuição por Severidade/Prioridade", secoes_pdf=secoes_pdf,
             )
+            renderizar_botao_analise_ia(
+                chave="severidade",
+                titulo="Distribuição por Severidade/Prioridade",
+                descricao="Distribuição de itens por Severidade/Prioridade.",
+                tipo_grafico=tipo_severidade.lower(), dados=df_severidade,
+                nome_usuario=AuthManager.current_username(),
+            )
         fila.adicionar(_sec_severidade)
 
     # ------------------------------------------------- Carga de risco por Responsável
@@ -619,6 +722,13 @@ def render_dashboard_page() -> None:
                 df_resp_x_severidade, tipo_resp_sev, x="Severidade", y="Quantidade",
                 chave="responsavel_severidade", cor="Responsável",
                 titulo="Carga de Risco por Responsável (Responsável × Severidade)", secoes_pdf=secoes_pdf,
+            )
+            renderizar_botao_analise_ia(
+                chave="responsavel_severidade",
+                titulo="Carga de Risco por Responsável (Responsável × Severidade)",
+                descricao="Cruzamento entre Responsável/Executor e Severidade/Prioridade — quem está com os itens mais críticos.",
+                tipo_grafico=tipo_resp_sev.lower(), dados=df_resp_x_severidade,
+                nome_usuario=AuthManager.current_username(),
             )
         fila.adicionar(_sec_resp_severidade)
 
@@ -681,6 +791,13 @@ def render_dashboard_page() -> None:
                     ordem_categorias={"Coluna do Board": analytics.ORDEM_COLUNAS_BOARD},
                     titulo="Distribuição por Coluna do Board (Kanban)", secoes_pdf=secoes_pdf,
                 )
+                renderizar_botao_analise_ia(
+                    chave="coluna_board",
+                    titulo="Distribuição por Coluna do Board (Kanban)",
+                    descricao="Quantidade de itens em cada Coluna do Board (Kanban), na ordem real do fluxo.",
+                    tipo_grafico=tipo_board.lower(), dados=df_coluna_board,
+                    nome_usuario=AuthManager.current_username(),
+                )
             else:
                 st.info('Nenhum item com Coluna do Board (fora de "Não atribuído(a)") para os filtros atuais.')
         fila.adicionar(_sec_coluna_board)
@@ -710,6 +827,13 @@ def render_dashboard_page() -> None:
                     chave="area_path_coluna_board", cor="Coluna do Board",
                     ordem_categorias={"Coluna do Board": analytics.ORDEM_COLUNAS_BOARD},
                     titulo="Area Path × Coluna do Board", secoes_pdf=secoes_pdf,
+                )
+                renderizar_botao_analise_ia(
+                    chave="area_path_coluna_board",
+                    titulo="Area Path × Coluna do Board",
+                    descricao="Cruzamento entre Area Path/Projeto e Coluna do Board — onde cada Area Path tem itens parados.",
+                    tipo_grafico=tipo_area_board.lower(), dados=df_area_x_board,
+                    nome_usuario=AuthManager.current_username(),
                 )
             fila.adicionar(_sec_area_coluna_board)
 
@@ -764,6 +888,16 @@ def render_dashboard_page() -> None:
                         mapa_cores_fixo=mapa_cores_severidade_calculada,
                         titulo="Severidade Calculada (posição no board)", secoes_pdf=secoes_pdf,
                     )
+                    renderizar_botao_analise_ia(
+                        chave="severidade_calculada",
+                        titulo="Severidade Calculada (posição no board)",
+                        descricao=(
+                            "Severidade calculada a partir da posição de cada item dentro da Coluna do "
+                            "Board (não é o campo manual de Severity)."
+                        ),
+                        tipo_grafico=tipo_severidade_calculada.lower(), dados=df_severidade_calculada,
+                        nome_usuario=AuthManager.current_username(),
+                    )
                     with st.expander("Ver detalhamento item a item da Severidade Calculada", expanded=False):
                         st.dataframe(
                             analytics.severidade_calculada_por_posicao(df_filtrado, mapeamento),
@@ -810,6 +944,13 @@ def render_dashboard_page() -> None:
                     cor="Projeto" if "Projeto" in df_volume_responsavel.columns else None,
                     titulo="Volume de Testes por Responsável", secoes_pdf=secoes_pdf,
                 )
+                renderizar_botao_analise_ia(
+                    chave="volume_responsavel",
+                    titulo="Volume de Testes por Responsável",
+                    descricao="Volume de testes executados por Responsável/Executor.",
+                    tipo_grafico=tipo_volume_responsavel.lower(), dados=df_volume_responsavel,
+                    nome_usuario=AuthManager.current_username(),
+                )
             else:
                 st.info("Sem dados suficientes de Responsável para montar este gráfico.")
         fila.adicionar(_sec_volume_responsavel)
@@ -833,6 +974,13 @@ def render_dashboard_page() -> None:
                 df_volume_tempo, tipo_volume_tempo, x="Semana", y="Quantidade",
                 chave="volume_responsavel_tempo", cor="Responsável",
                 titulo="Volume por Responsável ao Longo do Tempo", secoes_pdf=secoes_pdf,
+            )
+            renderizar_botao_analise_ia(
+                chave="volume_responsavel_tempo",
+                titulo="Volume por Responsável ao Longo do Tempo",
+                descricao="Volume de trabalho por Responsável ao longo do tempo (acumulado semanal).",
+                tipo_grafico=tipo_volume_tempo.lower(), dados=df_volume_tempo,
+                nome_usuario=AuthManager.current_username(),
             )
             if volume_tempo_truncado:
                 st.caption(
@@ -909,7 +1057,7 @@ def render_dashboard_page() -> None:
                     kpis=cartoes_kpi,
                     nome_arquivo_origem=nome_origem,
                     total_registros=len(df_filtrado),
-                    resumo_filtros=_montar_resumo_filtros_ativos(),
+                    resumo_filtros=resumir_filtros_ativos(),
                     logo_bytes=logo_path.read_bytes() if logo_path.exists() else None,
                 )
                 st.session_state["pdf_relatorio_bytes"] = pdf_bytes
@@ -929,33 +1077,6 @@ def render_dashboard_page() -> None:
 
     if st.session_state.get("pdf_relatorio_erro"):
         st.error(st.session_state["pdf_relatorio_erro"])
-
-
-def _montar_resumo_filtros_ativos() -> list[str]:
-    """
-    Descreve, em texto simples, os filtros aplicados no momento (mesmas
-    chaves de `st.session_state` lidas em `_aplicar_filtros_sidebar`) - usado
-    só no cabeçalho do relatório em PDF, pra deixar claro com quais filtros
-    aquele PDF foi gerado.
-    """
-    linhas = []
-    data_inicio = st.session_state.get("filtro_data_inicio")
-    data_fim = st.session_state.get("filtro_data_fim")
-    if data_inicio and data_fim:
-        linhas.append(f"Período: {data_inicio.strftime('%d/%m/%Y')} a {data_fim.strftime('%d/%m/%Y')}")
-
-    for chave_estado, rotulo in (
-        ("filtro_projeto", "Projeto"),
-        ("filtro_sprint", "Sprint"),
-        ("filtro_tipo_teste", "Tipos de Teste"),
-        ("filtro_status", "Status"),
-    ):
-        selecionados = st.session_state.get(chave_estado)
-        if selecionados:
-            texto = ", ".join(selecionados) if len(selecionados) <= 6 else f"{len(selecionados)} selecionados"
-            linhas.append(f"{rotulo}: {texto}")
-
-    return linhas
 
 
 def _renderizar_construtor_grafico_personalizado(

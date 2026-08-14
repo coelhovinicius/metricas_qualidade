@@ -69,10 +69,14 @@ from __future__ import annotations
 import time
 from typing import Optional
 
+import pandas as pd
 import streamlit as st
 
+from auth.auth_manager import AuthManager
 from core import analytics
 from core.column_mapper import MapeamentoColunas, detectar_mapeamento
+from core.fuso_horario import agora_brasilia
+from ui.analise_grafico import renderizar_botao_analise_ia
 from ui.busca_azure_devops import ResultadoBuscaAzureDevOps, renderizar_busca_azure_devops
 from ui.components import render_header, render_kpi_row
 from ui.filtros_dashboard import aplicar_filtros_sidebar
@@ -394,6 +398,22 @@ def render_scrum_page() -> None:
                 df_velocidade_sprint, tipo_sprint, x="Sprint", y="Quantidade", chave="scrum_sprint_velocidade",
                 titulo="Itens Concluídos por Sprint",
             )
+            renderizar_botao_analise_ia(
+                chave="scrum_sprint_velocidade",
+                titulo="Itens Concluídos por Sprint",
+                descricao=(
+                    "Quantidade de itens concluídos em cada sprint, dos mais antigos para o mais "
+                    "recente - velocity por CONTAGEM de itens (não por Story Points)."
+                ),
+                tipo_grafico=tipo_sprint.lower(),
+                dados=df_velocidade_sprint,
+                contexto_extra={
+                    "sprint_mais_recente": str(df_velocidade_sprint.iloc[-1]["Sprint"]),
+                    "quantidade_sprint_mais_recente": int(df_velocidade_sprint.iloc[-1]["Quantidade"]),
+                    "media_itens_por_sprint": media_por_sprint,
+                },
+                nome_usuario=AuthManager.current_username(),
+            )
         fila.adicionar(_sec_sprint_velocidade)
 
     # ---------------------------------------- Velocity por Story Points (esforço)
@@ -426,6 +446,19 @@ def render_scrum_page() -> None:
                 df_velocidade_pontos, tipo_velocidade_pontos, x="Sprint", y="Story Points Concluídos",
                 chave="scrum_velocidade_pontos", titulo="Velocity por Story Points (Sprint)",
             )
+            renderizar_botao_analise_ia(
+                chave="scrum_velocidade_pontos",
+                titulo="Velocity por Story Points (Sprint)",
+                descricao=(
+                    "Soma de Story Points dos itens concluídos em cada sprint — a Velocity clássica do "
+                    "Scrum, por esforço estimado (diferente de Itens Concluídos por Sprint, que conta "
+                    "itens, não pontos)."
+                ),
+                tipo_grafico=tipo_velocidade_pontos.lower(),
+                dados=df_velocidade_pontos,
+                contexto_extra={"cobertura_story_points_baixa": cobertura_sp_baixa},
+                nome_usuario=AuthManager.current_username(),
+            )
         fila.adicionar(_sec_velocidade_pontos)
 
     # ---------------------------------------- Itens Criados por Semana (inflow)
@@ -445,6 +478,14 @@ def render_scrum_page() -> None:
                 df_criados_semana, tipo_criados, x="Semana", y="Quantidade", chave="scrum_criados_semana",
                 cor="Status" if "Status" in df_criados_semana.columns else None,
                 titulo="Itens Criados por Semana",
+            )
+            renderizar_botao_analise_ia(
+                chave="scrum_criados_semana",
+                titulo="Itens Criados por Semana",
+                descricao="Volume de itens de entrega criados a cada semana — a entrada de trabalho no fluxo do time.",
+                tipo_grafico=tipo_criados.lower(),
+                dados=df_criados_semana,
+                nome_usuario=AuthManager.current_username(),
             )
         fila.adicionar(_sec_criados_semana)
 
@@ -472,6 +513,18 @@ def render_scrum_page() -> None:
                     df_mix_tipos, tipo_mix, x="Tipo de Teste", y="Quantidade", chave="scrum_mix_tipos",
                     titulo="Mix de Tipos de Trabalho em Aberto",
                 )
+                renderizar_botao_analise_ia(
+                    chave="scrum_mix_tipos",
+                    titulo="Mix de Tipos de Trabalho em Aberto",
+                    descricao=(
+                        "Composição, por Tipo de Work Item, do que está aberto agora — ajuda a ver se o "
+                        "time está dominado por dívida técnica (muito Bug) ou trabalho novo (muita "
+                        "Story/Feature)."
+                    ),
+                    tipo_grafico=tipo_mix.lower(),
+                    dados=df_mix_tipos,
+                    nome_usuario=AuthManager.current_username(),
+                )
             fila.adicionar(_sec_mix_tipos)
 
     # ---------------------------------------- WIP atual por Coluna do Board
@@ -495,6 +548,14 @@ def render_scrum_page() -> None:
                     df_wip_coluna, tipo_wip, x="Coluna do Board", y="Quantidade", chave="scrum_wip_coluna",
                     ordem_categorias={"Coluna do Board": analytics.ORDEM_COLUNAS_BOARD},
                     titulo="WIP Atual por Coluna do Board",
+                )
+                renderizar_botao_analise_ia(
+                    chave="scrum_wip_coluna",
+                    titulo="WIP Atual por Coluna do Board",
+                    descricao="Onde estão, agora, os itens ainda não concluídos, na ordem real do fluxo (Backlog → Finalizado).",
+                    tipo_grafico=tipo_wip.lower(),
+                    dados=df_wip_coluna,
+                    nome_usuario=AuthManager.current_username(),
                 )
             fila.adicionar(_sec_wip_coluna)
 
@@ -532,17 +593,50 @@ def render_scrum_page() -> None:
                     "Idade × Risco)** acima."
                 )
             st.plotly_chart(fig_backlog_coluna, use_container_width=True, key="chart_scrum_backlog_coluna")
+            renderizar_botao_analise_ia(
+                chave="scrum_backlog_coluna",
+                titulo="Onde o Trabalho Está Parado: Volume × Idade × Risco, por Coluna do Board",
+                descricao=(
+                    "Backlog aberto agrupado por Coluna do Board: volume de itens em aberto, idade "
+                    "média parado e percentual de itens Severidade Alta/Crítica em cada coluna."
+                ),
+                tipo_grafico="bolha (volume x idade x risco)" if tipo_backlog_coluna == "Bolha (Volume × Idade × Risco)" else tipo_backlog_coluna.lower(),
+                dados=df_backlog_coluna,
+                nome_usuario=AuthManager.current_username(),
+            )
             st.divider()
 
     # ---------------------------------------- Carga de Trabalho em Aberto por Responsável
     if df_aberto is not None and not df_aberto.empty and mapeamento.responsavel and mapeamento.responsavel in df_aberto.columns:
         df_carga_responsavel = analytics.volume_por_responsavel(df_aberto, mapeamento)
         if df_carga_responsavel is not None and not df_carga_responsavel.empty:
+            # "Em aberto agora" é só um retrato do momento - poucos itens em
+            # aberto pra alguém não quer dizer "trabalhou pouco" (pode ser o
+            # oposto: concluiu bastante recentemente, por isso sobrou pouco
+            # em aberto). Pra dar à IA uma base mais justa, calculamos também
+            # quanto cada Responsável CONCLUIU nos últimos 30 dias (itens que
+            # saíram do estado aberto - o complemento de `df_aberto` dentro
+            # de `df_scrum`) e mandamos junto no contexto, além do retrato
+            # atual isolado.
+            df_concluidos_scrum = df_scrum.loc[~df_scrum.index.isin(df_aberto.index)]
+            coluna_data_scrum = mapeamento.coluna_data_principal(df_scrum)
+            df_concluidos_recente_resp = None
+            if coluna_data_scrum and coluna_data_scrum in df_concluidos_scrum.columns:
+                datas_concluidos = pd.to_datetime(df_concluidos_scrum[coluna_data_scrum], errors="coerce")
+                limite_recente = pd.Timestamp(agora_brasilia().date()) - pd.Timedelta(days=30)
+                df_concluidos_recente = df_concluidos_scrum.loc[datas_concluidos >= limite_recente]
+                if not df_concluidos_recente.empty:
+                    df_concluidos_recente_resp = analytics.volume_por_responsavel(df_concluidos_recente, mapeamento)
+
             def _sec_carga_responsavel() -> None:
                 st.markdown("**Carga de Trabalho em Aberto por Responsável**")
                 explicacao(
                     "Quantos itens cada pessoa tem em aberto AGORA (não o histórico) — ajuda a "
-                    "enxergar sobrecarga concentrada antes que vire gargalo ou risco de burnout."
+                    "enxergar sobrecarga concentrada antes que vire gargalo ou risco de burnout. "
+                    "Poucos itens em aberto não é sinônimo de pouco trabalho: pode ser o oposto "
+                    "(a pessoa concluiu bastante recentemente). A análise por IA deste gráfico "
+                    "também recebe quanto cada um concluiu nos últimos 30 dias, pra não julgar só "
+                    "pela foto do momento."
                 )
                 col_tipo, _col_espaco = st.columns([1, 3])
                 with col_tipo:
@@ -552,6 +646,27 @@ def render_scrum_page() -> None:
                 plotar(
                     df_carga_responsavel, tipo_carga, x="Responsável", y="Quantidade",
                     chave="scrum_carga_responsavel", titulo="Carga de Trabalho em Aberto por Responsável",
+                )
+                renderizar_botao_analise_ia(
+                    chave="scrum_carga_responsavel",
+                    titulo="Carga de Trabalho em Aberto por Responsável",
+                    descricao=(
+                        "Quantos itens cada pessoa tem em aberto agora - é um RETRATO DO MOMENTO, não "
+                        "um histórico de esforço. Poucos itens em aberto para alguém pode significar "
+                        "que a pessoa concluiu bastante recentemente (ver itens_concluidos_ultimos_30_dias_por_responsavel "
+                        "no contexto), não que trabalhou pouco - cruze as duas informações antes de "
+                        "comentar sobre qualquer pessoa."
+                    ),
+                    tipo_grafico=tipo_carga.lower(),
+                    dados=df_carga_responsavel,
+                    contexto_extra={
+                        "itens_concluidos_ultimos_30_dias_por_responsavel": (
+                            df_concluidos_recente_resp.to_dict(orient="records")
+                            if df_concluidos_recente_resp is not None
+                            else []
+                        ),
+                    },
+                    nome_usuario=AuthManager.current_username(),
                 )
             fila.adicionar(_sec_carga_responsavel)
 
