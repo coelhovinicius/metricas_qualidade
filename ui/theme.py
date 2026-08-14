@@ -693,25 +693,30 @@ def injetar_css_global() -> None:
         }}
 
         /* ---------- Botão azul padrão Microsoft Azure DevOps ---------- */
-        /* `st.container(key="ado_btn_carregar_organizacao")` em upload_page.py
-           gera a classe CSS `st-key-ado_btn_carregar_organizacao` no container
-           (recurso nativo do Streamlit desde a versão que introduziu `key=` em
-           st.container - bem mais confiável que tentar casar elementos via
-           seletor de irmão adjacente, que depende da estrutura interna exata
-           do HTML gerado e mudou entre versões do Streamlit). */
-        .st-key-ado_btn_carregar_organizacao button {{
+        /* `st.container(key=...)` em ui/busca_azure_devops.py (função
+           `renderizar_busca_azure_devops`) gera, ao redor do botão "Carregar
+           organização", a classe CSS `st-key-<namespace>_btn_carregar_
+           organizacao_container` (recurso nativo do Streamlit - bem mais
+           confiável que casar elementos via seletor de irmão adjacente, que
+           depende da estrutura interna exata do HTML e muda entre versões).
+           Essa tela tem DUAS instâncias independentes (ver `_chave()` no
+           módulo citado) - namespace "azure" (Importar Dados) e
+           "scrum_azure" (Scrum & Sprints) - por isso o seletor abaixo usa
+           `[class*=...]` (contém), pra pegar as duas classes de uma vez só,
+           em vez de fixar um namespace específico. */
+        div[class*="btn_carregar_organizacao_container"] button {{
             background-color: #0078D4 !important;
             color: #FFFFFF !important;
             border: 1px solid #0078D4 !important;
             font-weight: 600 !important;
             border-radius: 6px !important;
         }}
-        .st-key-ado_btn_carregar_organizacao button:hover {{
+        div[class*="btn_carregar_organizacao_container"] button:hover {{
             background-color: #005A9E !important;
             border-color: #005A9E !important;
             color: #FFFFFF !important;
         }}
-        .st-key-ado_btn_carregar_organizacao button:disabled {{
+        div[class*="btn_carregar_organizacao_container"] button:disabled {{
             background-color: #8fb9d9 !important;
             border-color: #8fb9d9 !important;
         }}
