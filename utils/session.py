@@ -13,7 +13,15 @@ CHAVES_PADRAO = {
     "df_status_preparado": None,
     # ---- Seleção em cascata da busca automática no Azure DevOps ----
     # O PAT nunca é persistido em disco/secrets - fica só aqui, em memória,
-    # durante a sessão do navegador (ver core/azure_devops_client.py).
+    # durante a sessão do navegador (ver core/azure_devops_client.py). Toda
+    # essa cascata (widget/lógica) mora em `ui/busca_azure_devops.py`
+    # (`renderizar_busca_azure_devops`), reaproveitada tanto pela busca geral
+    # do app (`ui/pages/upload_page.py`, chaves com este prefixo "azure_",
+    # pré-registradas aqui) quanto pela busca PRÓPRIA e independente da
+    # página Scrum & Sprints (`ui/pages/scrum_page.py`, chaves com o prefixo
+    # "scrum_azure_", não pré-registradas aqui - não precisam, o código
+    # sempre lê com `.get(..., padrão)` - mas seguem exatamente a mesma
+    # estrutura, só com outro prefixo, e nunca compartilham valor com estas).
     "azure_pat": "",
     "azure_organizacao_carregada": None,  # organização já confirmada (após clicar "Carregar")
     "azure_projetos_disponiveis": [],  # list[Projeto] retornada pela API
@@ -24,13 +32,13 @@ CHAVES_PADRAO = {
     "azure_query_selecionada_id": None,
     # ---- Memória do último valor realmente usado em cada passo ----
     # Ao contrário das chaves acima (que representam o passo "em andamento"
-    # e são limpas por resetar_selecao_azure_devops quando um passo anterior
-    # muda), estas guardam o último valor de verdade escolhido pelo usuário
-    # nesta sessão do navegador e NUNCA são limpas por resetar_selecao_azure_devops.
+    # e são limpas por `resetar_selecao_azure_devops_namespaced` quando um
+    # passo anterior muda), estas guardam o último valor de verdade escolhido
+    # pelo usuário nesta sessão do navegador e NUNCA são limpas por ela.
     # Servem só para a tela de importação conseguir se auto-recuperar (ver
-    # upload_page.py) caso a cascata de seleção seja perdida por algum motivo
-    # externo (ex.: navegação entre páginas), sem obrigar o usuário a refazer
-    # manualmente todos os passos.
+    # `ui/busca_azure_devops.py`) caso a cascata de seleção seja perdida por
+    # algum motivo externo (ex.: navegação entre páginas), sem obrigar o
+    # usuário a refazer manualmente todos os passos.
     "azure_ultima_organizacao_usada": None,
     "azure_ultimo_projeto_usado": None,
     "azure_ultimos_area_paths_usados": [],
@@ -123,26 +131,6 @@ def resetar_para_nova_analise() -> None:
         if chave.startswith(_PREFIXO_CHAVES_TIPO_GRAFICO):
             st.session_state.pop(chave, None)
     st.session_state["pagina_atual"] = "upload"
-
-
-def resetar_selecao_azure_devops(manter_organizacao: bool = False) -> None:
-    """
-    Limpa a cascata de seleção da busca automática no Azure DevOps (projeto,
-    area path e query), usada sempre que um passo anterior muda (ex.: troca
-    de organização ou de projeto invalida o que já tinha sido carregado nos
-    passos seguintes). O PAT nunca é limpo por aqui - só no logout. As chaves
-    de memória "azure_ultimo(a)_*_usado(a)" também nunca são limpas por esta
-    função de propósito - são o que permite a tela de importação se
-    auto-recuperar depois (ver upload_page.py).
-    """
-    if not manter_organizacao:
-        st.session_state["azure_organizacao_carregada"] = None
-    st.session_state["azure_projetos_disponiveis"] = []
-    st.session_state["azure_projeto_selecionado"] = None
-    st.session_state["azure_area_paths_disponiveis"] = []
-    st.session_state["azure_area_paths_selecionados"] = []
-    st.session_state["azure_queries_disponiveis"] = []
-    st.session_state["azure_query_selecionada_id"] = None
 
 
 def resetar_selecao_google_drive() -> None:

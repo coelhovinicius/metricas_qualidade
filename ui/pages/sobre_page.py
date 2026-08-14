@@ -32,19 +32,20 @@ from core.config_app import (
     CHAVE_CODIGO_VISAO_ADMIN_SOBRE_APP,
     CHAVE_FLUXOGRAMA_COMPLETO_BASE64,
     CHAVE_FLUXOGRAMA_PUBLICO_BASE64,
-    CHAVE_GUIA_PDF_BASE64,
     obter_configuracao,
 )
+from core.gerador_guia_pdf import obter_bytes_pdf_atual
 from ui.components import render_header
 from ui.pages.admin_page import usuario_e_admin
 
 # ui/pages/sobre_page.py -> ui/pages -> ui -> raiz do projeto -> assets/
 _ASSETS_DIR = Path(__file__).resolve().parent.parent.parent / "assets"
 # Nome só pra sugerir no download (`file_name=`) - o CONTEÚDO em si vem do
-# banco de dados (Turso) sempre que existir, ver `_obter_bytes_guia_pdf`;
-# este arquivo em disco é usado só como versão padrão/de fallback, incluída
-# no próprio repositório, para quando ainda ninguém clicou em "🔄 Gerar/
-# Atualizar PDF agora" em Administração neste ambiente.
+# banco de dados (Turso) sempre que existir, ver
+# `core/gerador_guia_pdf.py::obter_bytes_pdf_atual`; este arquivo em disco é
+# usado só como versão padrão/de fallback, incluída no próprio repositório,
+# para quando ainda ninguém clicou em "🔄 Gerar/Atualizar PDF agora" em
+# Administração neste ambiente.
 _CAMINHO_GUIA_PDF = _ASSETS_DIR / "Guia_do_Usuario_QA.pdf"
 
 # Imagens do "Fluxograma completo do app" em retângulos + setas de verdade
@@ -58,32 +59,6 @@ _CAMINHO_GUIA_PDF = _ASSETS_DIR / "Guia_do_Usuario_QA.pdf"
 # agora" em Administração - ver `_obter_bytes_fluxograma` abaixo).
 _CAMINHO_FLUXOGRAMA_COMPLETO = _ASSETS_DIR / "fluxograma_completo.png"
 _CAMINHO_FLUXOGRAMA_PUBLICO = _ASSETS_DIR / "fluxograma_publico.png"
-
-
-def _obter_bytes_guia_pdf() -> Optional[bytes]:
-    """
-    Bytes do PDF do "Guia Completo do Usuário", prontos para
-    `st.download_button`. Prioridade: (1) versão gravada no banco de dados
-    (Turso) pelo botão de Administração - é a fonte "viva", que sobrevive a
-    reinícios/redeploys mesmo em hospedagem com disco temporário (Streamlit
-    Community Cloud); (2) se ainda não existir nenhuma lá (app recém-
-    publicado, ninguém clicou no botão ainda), cai para o arquivo padrão já
-    incluído no repositório. Qualquer falha ao falar com o banco (Turso não
-    configurado, fora do ar, etc.) é silenciosa aqui, com o mesmo fallback -
-    esta é só uma tela informativa, não deve quebrar por isso.
-    """
-    try:
-        base64_pdf = obter_configuracao(CHAVE_GUIA_PDF_BASE64)
-    except Exception:
-        base64_pdf = None
-    if base64_pdf:
-        try:
-            return base64.b64decode(base64_pdf)
-        except (ValueError, TypeError):
-            pass
-    if _CAMINHO_GUIA_PDF.exists():
-        return _CAMINHO_GUIA_PDF.read_bytes()
-    return None
 
 
 def _obter_bytes_fluxograma(chave_base64: str, caminho_fallback: Path) -> Optional[bytes]:
@@ -426,7 +401,7 @@ def _sec_guia_para_baixar() -> None:
         "qualquer usuário novo."
     )
 
-    bytes_pdf = _obter_bytes_guia_pdf()
+    bytes_pdf = obter_bytes_pdf_atual()
     if bytes_pdf:
         st.download_button(
             "⬇️ Baixar Guia Completo do Usuário (PDF)",

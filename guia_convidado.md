@@ -40,10 +40,11 @@ Depois que sua conta for criada, volte a essa mesma tela para fazer login normal
 
 ## 3. Navegação geral
 
-Depois de logado, a barra lateral esquerda mostra três botões:
+Depois de logado, a barra lateral esquerda mostra quatro botões:
 
 - **📥 Importar Dados** — tela inicial, para trazer um arquivo de testes para dentro do app.
 - **📊 Indicadores** — o dashboard em si, com todos os gráficos.
+- **🏃 Scrum & Sprints** — área dedicada a indicadores de fluxo, ritmo de entrega e trabalho em andamento (WIP), pensada para observabilidade de Scrum/Sprints. Visível para qualquer pessoa logada, sem precisar de acesso administrativo.
 - **ℹ️ Sobre o App** — uma explicação visual (com fluxograma) de como o app inteiro funciona, incluindo um resumo do que existe do lado da Administração — mesmo você não tendo acesso a ela — e o Guia Completo do Usuário para baixar em PDF.
 
 O botão da página em que você está fica destacado em laranja. Mais abaixo na barra lateral aparece o botão **🔄 Nova Análise** (só depois de você já ter importado algum arquivo) e, por último, **Sair**.

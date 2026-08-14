@@ -34,9 +34,12 @@ documento genérico colado por cima.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import inspect
 import io
+from pathlib import Path
+from typing import Optional
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
@@ -403,6 +406,7 @@ def _montar_story() -> list:
         ("Severity (ou Priority)", "Severidade/Prioridade", "Cores fixas: Critical/High/Medium/Low."),
         ("Board Column *", "Coluna do Board", "Distribuição por Coluna, Area Path × Coluna, Funil."),
         ("Iteration Path **", "Sprint", "Sprints — Itens Concluídos, Volume por Responsável no tempo."),
+        ("Story Points ***", "Story Points", "Velocity clássica do Scrum, na página Scrum & Sprints."),
     ]))
     story.append(Spacer(1, 6))
     story.append(callout(
@@ -417,6 +421,13 @@ def _montar_story() -> list:
         "Path é o texto (\"Projeto\\Sprint 24\"); Iteration ID é só um número interno, sem uso "
         "aqui. Se vier só o ID por engano, o app pode sugerir errado — dá para corrigir na tela "
         "de confirmação de mapeamento (próxima seção).",
+        "atencao",
+    ))
+    story.append(Spacer(1, 4))
+    story.append(callout(
+        "<b>***</b> Normalmente só existe em tipos como User Story/Product Backlog Item — Bugs, "
+        "Tasks e Test Cases costumam não ter esse campo, o que é esperado. Com pouca cobertura, "
+        "o gráfico de Velocity avisa em vez de mostrar um número enganoso.",
         "atencao",
     ))
     story.append(PageBreak())
@@ -560,3 +571,41 @@ def hash_conteudo_atual() -> str:
     """
     codigo_fonte = inspect.getsource(_montar_story)
     return hashlib.sha256(codigo_fonte.encode("utf-8")).hexdigest()
+
+
+# core/gerador_guia_pdf.py -> core -> raiz do projeto -> assets/
+_ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
+_CAMINHO_GUIA_PDF_FALLBACK = _ASSETS_DIR / "Guia_do_Usuario_QA.pdf"
+
+
+def obter_bytes_pdf_atual() -> Optional[bytes]:
+    """
+    Bytes do PDF "Guia Completo do Usuário" já prontos para oferecer como
+    download - mesma lógica usada por `ui/pages/sobre_page.py` (antes
+    duplicada lá, agora centralizada aqui para qualquer outra tela reutilizar,
+    ex.: o modal de "novidades" pós-login em `ui/novidades.py`). Prioridade:
+    (1) versão gravada no banco de dados (Turso) pelo botão de Administração -
+    é a fonte "viva", que sobrevive a reinícios/redeploys mesmo em hospedagem
+    com disco temporário (Streamlit Community Cloud); (2) se ainda não existir
+    nenhuma lá, cai para o arquivo padrão já incluído no repositório. Qualquer
+    falha ao falar com o banco é silenciosa aqui, com o mesmo fallback - este
+    PDF é só um material de apoio, não deve travar nenhuma tela por causa dele.
+    """
+    # Import local (não no topo do arquivo) para evitar import circular: este
+    # módulo é importado bem cedo (ex.: por scripts de linha de comando que
+    # não têm nada a ver com o banco de dados), e `core.config_app` puxa
+    # `core.turso_client` só por causa desta função específica.
+    from core.config_app import CHAVE_GUIA_PDF_BASE64, obter_configuracao
+
+    try:
+        base64_pdf = obter_configuracao(CHAVE_GUIA_PDF_BASE64)
+    except Exception:
+        base64_pdf = None
+    if base64_pdf:
+        try:
+            return base64.b64decode(base64_pdf)
+        except (ValueError, TypeError):
+            pass
+    if _CAMINHO_GUIA_PDF_FALLBACK.exists():
+        return _CAMINHO_GUIA_PDF_FALLBACK.read_bytes()
+    return None

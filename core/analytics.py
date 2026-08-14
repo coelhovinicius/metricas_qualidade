@@ -1024,6 +1024,26 @@ def _mascara_itens_em_aberto(df: pd.DataFrame, mapeamento: MapeamentoColunas) ->
     return ~status_bruto.apply(_estado_e_terminal)
 
 
+def filtrar_itens_em_aberto(df: pd.DataFrame, mapeamento: MapeamentoColunas) -> Optional[pd.DataFrame]:
+    """
+    Devolve só as linhas de `df` cujo status ainda não chegou a um estado
+    terminal - mesmo critério usado internamente por `calcular_backlog_aberto`/
+    `ranking_itens_mais_antigos_abertos`/`backlog_aberto_por_grupo`, só que
+    aqui exposto como o próprio subconjunto filtrado (não uma estatística
+    calculada em cima dele), pra alimentar indicadores de "estado ATUAL do
+    trabalho em andamento" (WIP) que olham outra dimensão além de idade -
+    ex.: WIP atual por Coluna do Board e mix de Tipos de Trabalho em aberto,
+    ambos em `ui/pages/scrum_page.py`.
+
+    Requer Status mapeado; sem isso, retorna `None` (não tem como saber o que
+    é aberto/terminal).
+    """
+    mascara_aberto = _mascara_itens_em_aberto(df, mapeamento)
+    if mascara_aberto is None:
+        return None
+    return df.loc[mascara_aberto].copy()
+
+
 def calcular_backlog_aberto(
     df: pd.DataFrame, mapeamento: MapeamentoColunas
 ) -> Optional[IndicadoresBacklogAberto]:
@@ -1154,6 +1174,105 @@ def itens_concluidos_por_sprint(
         .reset_index()
     )
     resultado.columns = ["Sprint", "Quantidade"]
+    return resultado
+
+
+def cobertura_story_points(df: pd.DataFrame, mapeamento: MapeamentoColunas) -> Optional[dict[str, float]]:
+    """
+    Preenchimento do campo Story Points no arquivo importado: quantos itens
+    (de `df`, já filtrado pelo escopo que o chamador quiser considerar) têm
+    um valor numérico válido, de quantos no total.
+
+    Story Points é preenchido MANUALMENTE pelo time durante planejamento/
+    refinamento no próprio Azure DevOps - nunca é calculado automaticamente
+    pela plataforma. Times que ainda não adotaram essa prática (ou adotaram
+    só parcialmente) deixam a maioria dos itens vazios; usado por
+    `ui/pages/scrum_page.py` pra decidir quando avisar que a Velocity por
+    Story Points (`velocidade_por_sprint_pontos`) está sendo calculada em
+    cima de poucos itens, e por isso tende a aparecer artificialmente baixa
+    - não porque o time entregou pouco, mas porque a maior parte do que foi
+    entregue não tem esforço estimado registrado.
+
+    Retorna `None` sem Story Points mapeado nos dados. Com `df` vazio,
+    devolve percentual 0.0 (evita divisão por zero) em vez de `None`, porque
+    aqui a resposta "0% preenchido" ainda é uma resposta válida.
+    """
+    if not mapeamento.story_points or mapeamento.story_points not in df.columns:
+        return None
+    total = len(df)
+    preenchidos = int(pd.to_numeric(df[mapeamento.story_points], errors="coerce").notna().sum())
+    percentual = round((preenchidos / total) * 100, 1) if total > 0 else 0.0
+    return {"preenchidos": preenchidos, "total": total, "percentual": percentual}
+
+
+def velocidade_por_sprint_pontos(
+    df: pd.DataFrame, mapeamento: MapeamentoColunas, top_n: int = 12
+) -> Optional[pd.DataFrame]:
+    """
+    Soma de Story Points dos itens CONCLUÍDOS (estado terminal) por Sprint -
+    a Velocity clássica do Scrum, por esforço estimado (diferente de
+    `itens_concluidos_por_sprint`, que conta ITENS, não pontos). Mesma
+    aproximação de ordem cronológica dos sprints usada lá: pela data mais
+    antiga (`coluna_data_principal`) entre os itens concluídos de cada
+    sprint, já que o Azure DevOps não expõe data de início/fim de sprint por
+    esta via de import.
+
+    Itens concluídos SEM valor numérico válido em Story Points somam 0
+    dentro do respectivo sprint (não são descartados da CONTAGEM de sprints
+    exibidos) - o eixo de sprints é o MESMO de `itens_concluidos_por_sprint`
+    (todo sprint com pelo menos um item concluído aparece aqui, mesmo que
+    nenhum desses itens tenha Story Points preenchido). Isso é proposital:
+    um sprint que entregou itens mas aparece com 0 pontos aqui é justamente
+    o sinal de baixa cobertura que a Scrum Master precisa enxergar - se esse
+    sprint simplesmente sumisse do eixo, pareceria "esse sprint não existe"
+    em vez de "esse sprint não tem esforço registrado" (ver
+    `cobertura_story_points`, que a UI usa para avisar sobre isso de forma
+    explícita).
+
+    Limitado aos `top_n` sprints mais recentes, mesmo critério de
+    `itens_concluidos_por_sprint`.
+
+    Requer Story Points, Sprint, Status e a coluna de data principal
+    mapeados - sem algum dos quatro, retorna `None`.
+    """
+    if not mapeamento.story_points or mapeamento.story_points not in df.columns:
+        return None
+    if not mapeamento.sprint or mapeamento.sprint not in df.columns:
+        return None
+    coluna_data = mapeamento.coluna_data_principal(df)
+    if not coluna_data or coluna_data not in df.columns:
+        return None
+
+    mascara_aberto = _mascara_itens_em_aberto(df, mapeamento)
+    if mascara_aberto is None:
+        return None
+
+    concluidos = df.loc[~mascara_aberto].copy()
+    concluidos = concluidos[
+        concluidos[mapeamento.sprint].notna() & (concluidos[mapeamento.sprint] != ROTULO_VAZIO_PADRAO)
+    ]
+    if concluidos.empty:
+        return pd.DataFrame(columns=["Sprint", "Story Points Concluídos"])
+
+    concluidos["__data_ordenacao__"] = pd.to_datetime(concluidos[coluna_data], errors="coerce")
+    concluidos["__pontos__"] = pd.to_numeric(concluidos[mapeamento.story_points], errors="coerce")
+
+    ordem_sprints = (
+        concluidos.groupby(mapeamento.sprint)["__data_ordenacao__"]
+        .min()
+        .sort_values()
+        .index.tolist()
+    )
+    ordem_sprints = ordem_sprints[-top_n:]
+
+    resultado = (
+        concluidos[concluidos[mapeamento.sprint].isin(ordem_sprints)]
+        .groupby(mapeamento.sprint)["__pontos__"]
+        .sum()  # skipna por padrão: grupo sem NENHUM valor válido soma 0.0, não NaN
+        .reindex(ordem_sprints, fill_value=0)
+        .reset_index()
+    )
+    resultado.columns = ["Sprint", "Story Points Concluídos"]
     return resultado
 
 

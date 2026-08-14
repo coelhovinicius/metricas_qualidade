@@ -42,9 +42,12 @@ A solução é simples: configurar a query **uma vez** com todas as colunas reco
 | **Severity** (ou **Priority**) | Severidade / Prioridade | Distribuição por Severidade/Prioridade (cores fixas: Critical/High/Medium/Low). |
 | **Board Column** | Coluna do Board (Kanban) | Distribuição por Coluna do Board, Area Path × Coluna do Board, Funil. |
 | **Iteration Path** ⚠️ | Sprint | Sprints — Itens Concluídos, Volume por Responsável ao Longo do Tempo. |
+| **Story Points** | Story Points | Velocity clássica do Scrum (Story Points concluídos por Sprint), na página Scrum & Sprints. |
 | **Tags** | (sem campo fixo) | Não vira nenhum indicador pronto sozinho, mas fica disponível como opção no "gráfico personalizado" (junto com qualquer outra coluna extra que sobrar no arquivo). |
 
 ⚠️ **Atenção ao nome exato:** é **Iteration Path**, não **Iteration ID** — são campos diferentes (Iteration Path é o texto "Projeto\Sprint 24"; Iteration ID é só um número interno sem uso no app). Se por engano só o Iteration ID for adicionado, o app pode tentar usá-lo como Sprint mesmo assim e os gráficos mostrarão números em vez do nome da sprint — dá para perceber e corrigir na tela de confirmação de mapeamento, mas o certo já de início é usar Iteration Path.
+
+⚠️ **Sobre Story Points:** normalmente só existe (e só faz sentido preencher) em tipos de item como **User Story**/**Product Backlog Item** — Bugs, Tasks e Test Cases costumam não ter esse campo, o que é esperado. Se poucos itens tiverem Story Points preenchido, o gráfico de Velocity na página Scrum & Sprints avisa sobre a baixa cobertura em vez de mostrar um número enganoso.
 
 ⚠️ **Board Column nem sempre aparece na lista de colunas disponíveis** para adicionar, dependendo do processo/template do seu projeto no Azure DevOps (Agile, Scrum, Basic, CMMI) — se não encontrar "Board Column" na busca do Column Options, esse indicador específico (Distribuição por Coluna do Board) simplesmente fica indisponível para arquivos exportados manualmente; o resto do app continua funcionando normalmente.
 
@@ -65,7 +68,7 @@ Dois indicadores do app — **"Prioridade Dentro do Board"** e **"Severidade Cal
 
 Antes de exportar o CSV da sua query no Azure DevOps, confirme que estas colunas estão marcadas em **Column Options**:
 
-`ID` · `Work Item Type` · `State` · `Area Path` · `Assigned To` · `Created By` · `Created Date` · `Severity` (ou `Priority`) · `Board Column` · **`Iteration Path`** (não Iteration ID)
+`ID` · `Work Item Type` · `State` · `Area Path` · `Assigned To` · `Created By` · `Created Date` · `Severity` (ou `Priority`) · `Board Column` · **`Iteration Path`** (não Iteration ID) · `Story Points`
 
 Depois: **Export to CSV** → suba esse arquivo (upload direto, ou deixe na sua pasta do Google Drive) no app normalmente.
 

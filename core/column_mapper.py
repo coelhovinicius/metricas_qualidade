@@ -98,6 +98,16 @@ PALAVRAS_CHAVE: dict[str, list[str]] = {
         "prioridade board",
         "prioridade (posicao no board)",
     ],
+    # "Story Points" (processo Agile do Azure DevOps, campo interno
+    # Microsoft.VSTS.Scheduling.StoryPoints, em User Story/Bug) é o campo que
+    # alimenta a Velocity CLÁSSICA do Scrum (soma de esforço concluído por
+    # sprint - ver `analytics.velocidade_por_sprint_pontos`), diferente de
+    # "Itens Concluídos por Sprint" (contagem de itens, sem depender deste
+    # campo). É um campo preenchido manualmente pelo time durante
+    # planejamento/refinamento no próprio Azure DevOps - times que não fazem
+    # essa estimativa deixam a maioria dos itens vazios, o que a página
+    # Scrum & Sprints avisa na tela quando a cobertura fica baixa.
+    "story_points": ["story points", "storypoints", "story point", "pontos de historia", "pontos da historia"],
 }
 
 # Palavras curtas (<=3 caracteres) só devem "casar" como token isolado, para
@@ -197,6 +207,7 @@ class MapeamentoColunas:
     coluna_board: Optional[str] = None
     sprint: Optional[str] = None
     prioridade_board: Optional[str] = None
+    story_points: Optional[str] = None
     campos_personalizados: dict[str, str] = field(default_factory=dict)
     confianca: dict[str, float] = field(default_factory=dict)
 
@@ -215,6 +226,7 @@ class MapeamentoColunas:
             "coluna_board": self.coluna_board,
             "sprint": self.sprint,
             "prioridade_board": self.prioridade_board,
+            "story_points": self.story_points,
         }
 
     def coluna_data_principal(self, df: Optional[pd.DataFrame] = None) -> Optional[str]:
@@ -298,6 +310,7 @@ def detectar_mapeamento(df: pd.DataFrame) -> MapeamentoColunas:
         "severidade",
         "coluna_board",
         "sprint",
+        "story_points",
     ]
 
     for campo in ordem_campos:

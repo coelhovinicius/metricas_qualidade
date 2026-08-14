@@ -53,6 +53,14 @@ CAMPOS_API_PARA_COLUNA = {
     # Area Path também se aplica aqui (ver `column_mapper.simplificar_valor_projeto`,
     # reaproveitado em `_montar_dataframe` para esta coluna).
     "System.IterationPath": "Sprint",
+    # Campo usado pela Velocity clássica do Scrum (soma de esforço concluído
+    # por sprint - ver `analytics.velocidade_por_sprint_pontos`). Só vem
+    # preenchido em processos que usam esse campo (ex.: Agile, em User
+    # Story/Bug - ver `column_mapper.PALAVRAS_CHAVE["story_points"]`) e só
+    # quando o time realmente estimou o item durante planejamento/
+    # refinamento no próprio Azure DevOps - itens sem estimativa vêm vazios
+    # aqui, não é um problema desta busca.
+    "Microsoft.VSTS.Scheduling.StoryPoints": "Story Points",
 }
 
 # Campos auxiliares, buscados na API mas que não viram coluna própria no

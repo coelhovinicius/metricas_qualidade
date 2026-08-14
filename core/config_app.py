@@ -74,6 +74,25 @@ CHAVE_FLUXOGRAMA_PUBLICO_BASE64 = "fluxograma_publico_base64"
 CHAVE_FLUXOGRAMA_PUBLICO_HASH = "fluxograma_publico_hash"
 
 
+# Guarda, POR USUÁRIO, qual foi a última "versão" do modal de novidades (ver
+# `ui/novidades.py::VERSAO_NOVIDADES_ATUAL`) que essa pessoa já viu e marcou
+# como "não mostrar mais essas novidades" - se o valor salvo aqui for
+# diferente da versão atual do código (ou nunca tiver sido salvo), o modal
+# volta a aparecer pra ela logo após o login. Mesma lógica de
+# `chave_pasta_raiz_google_drive` acima: uma chave por usuário, não uma só
+# global, porque cada pessoa loga e vê as novidades em momentos diferentes.
+_PREFIXO_CHAVE_NOVIDADES_VISTA = "novidades_versao_vista__"
+
+
+def chave_novidades_vista(nome_usuario: str) -> str:
+    """
+    Monta a chave usada para guardar, para UM usuário específico, a última
+    versão do modal de "novidades" (ver `ui/novidades.py`) que ele já viu e
+    dispensou permanentemente (marcou "não mostrar mais essas novidades").
+    """
+    return f"{_PREFIXO_CHAVE_NOVIDADES_VISTA}{nome_usuario}"
+
+
 def chave_pasta_raiz_google_drive(nome_usuario: str) -> str:
     """
     Monta a chave usada para guardar a pasta do Google Drive de UM usuário

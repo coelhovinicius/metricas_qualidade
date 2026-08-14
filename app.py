@@ -29,9 +29,11 @@ import streamlit as st
 from auth.auth_manager import AuthManager
 from core.logs_sistema import TIPO_ERRO, registrar_log
 from ui.components import action_button, finish_action, loading_overlay, rolar_para_topo
+from ui.novidades import renderizar_modal_novidades_se_necessario
 from ui.pages.admin_page import render_admin_page, usuario_e_admin
 from ui.pages.dashboard_page import render_dashboard_page
 from ui.pages.login_page import render_login_page
+from ui.pages.scrum_page import render_scrum_page
 from ui.pages.sobre_page import render_sobre_page
 from ui.pages.upload_page import render_upload_page
 from ui.theme import injetar_css_global
@@ -68,7 +70,15 @@ def _renderizar_sidebar_navegacao(auth_manager: AuthManager) -> None:
     st.sidebar.caption(f"Sessão de **{nome_usuario}**")
     st.sidebar.divider()
 
-    paginas = {"upload": "📥 Importar Dados", "dashboard": "📊 Indicadores"}
+    paginas = {
+        "upload": "📥 Importar Dados",
+        "dashboard": "📊 Indicadores",
+        # Visível pra QUALQUER pessoa logada (admin ou convidado) - pedido
+        # explícito: a área de Scrum/Sprints (fluxo, WIP, ritmo de entrega)
+        # é pensada como ferramenta de observabilidade pra Scrum Master, que
+        # pode não ter (nem precisar de) acesso administrativo ao app.
+        "scrum": "🏃 Scrum & Sprints",
+    }
     if usuario_e_admin(auth_manager.current_username()):
         paginas["admin"] = "⚙️ Administração"
     # Visível pra QUALQUER pessoa logada (não só o admin) - sempre por
@@ -194,6 +204,12 @@ def main() -> None:
         render_login_page(auth_manager)
         return
 
+    # Logo após confirmar o login (antes de desenhar a barra lateral/página
+    # atual): decide sozinho se mostra o modal de "novidades" - ver
+    # `ui/novidades.py` para a lógica completa (uma vez por sessão do
+    # navegador, com opção de dispensar permanentemente).
+    renderizar_modal_novidades_se_necessario(auth_manager)
+
     _renderizar_sidebar_navegacao(auth_manager)
     _renderizar_botao_nova_analise()
 
@@ -206,6 +222,8 @@ def main() -> None:
             render_admin_page()
         elif pagina_atual == "sobre":
             render_sobre_page()
+        elif pagina_atual == "scrum":
+            render_scrum_page()
         else:
             render_dashboard_page()
     except Exception as exc:

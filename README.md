@@ -15,6 +15,7 @@ Acesso multiusuário com login, controle de quem pode ver o quê e um fluxo de s
   - [Mapeamento de colunas](#mapeamento-de-colunas)
   - [Filtros do dashboard](#filtros-do-dashboard)
   - [Indicadores e gráficos](#indicadores-e-gráficos)
+  - [Scrum & Sprints](#scrum--sprints)
   - [Construtor de gráfico personalizado](#construtor-de-gráfico-personalizado)
   - [Relatório completo em PDF](#relatório-completo-em-pdf)
   - [Painel administrativo](#painel-administrativo)
@@ -69,7 +70,7 @@ Três formas de trazer os dados para o app, todas alimentando o mesmo pipeline d
 
 ### Mapeamento de colunas
 
-Como a estrutura do arquivo pode variar, o app tenta identificar sozinho qual coluna representa cada campo canônico (Projeto, Status, Data Planejada, Data de Execução, Data de Criação, Tipo de Teste, Responsável/Executor, **Criado por** — reserva do Responsável, ver abaixo —, Caso de Teste/ID, Severidade/Prioridade, Coluna do Board, **Sprint** — a partir de "Iteration Path", ver o guia de queries — e, só em dados vindos do Azure DevOps por PAT, Prioridade dentro do Board) por correspondência de palavras-chave, com suporte a termos em português e inglês (exports do Azure DevOps costumam vir em inglês mesmo em organizações que operam em português).
+Como a estrutura do arquivo pode variar, o app tenta identificar sozinho qual coluna representa cada campo canônico (Projeto, Status, Data Planejada, Data de Execução, Data de Criação, Tipo de Teste, Responsável/Executor, **Criado por** — reserva do Responsável, ver abaixo —, Caso de Teste/ID, Severidade/Prioridade, Coluna do Board, **Sprint** — a partir de "Iteration Path", ver o guia de queries —, **Story Points** — usado pela Velocity clássica na página Scrum & Sprints, ver abaixo — e, só em dados vindos do Azure DevOps por PAT, Prioridade dentro do Board) por correspondência de palavras-chave, com suporte a termos em português e inglês (exports do Azure DevOps costumam vir em inglês mesmo em organizações que operam em português).
 
 O mapeamento sugerido é sempre exibido para confirmação/ajuste manual antes de qualquer gráfico ser gerado — nunca é aplicado silenciosamente. Também é possível anexar **campos personalizados** (qualquer outra coluna do arquivo, com um rótulo livre), disponíveis no filtro e no construtor de gráfico personalizado.
 
@@ -93,7 +94,6 @@ Aplicados a todo o painel, na barra lateral:
 - **Area Path × Status** — cruzamento que evita misturar vocabulários diferentes de Status quando times/processos distintos estão selecionados ao mesmo tempo.
 - **Backlog Aberto** — idade média/mediana dos itens ainda abertos, e quantos estão parados há mais de 90/180/365 dias, mais um gráfico de bolha (Volume × Idade × Risco).
 - **Planejamento vs. Testes Efetivados**.
-- **Sprints — Itens Concluídos** e **Volume por Responsável ao Longo do Tempo**, quando a coluna Sprint está mapeada.
 - **Testes por Projeto** e **Ranking de Bugs por Projeto**.
 - **Distribuição por Tipo de Teste**, com exclusão configurável de tipos "contêiner" (Test Plan, Test Suite) que não representam um item de teste individual.
 - **Taxa de Sucesso por Projeto**.
@@ -108,6 +108,27 @@ Aplicados a todo o painel, na barra lateral:
 - **Tabela de dados detalhados** (filtrados) com exportação para CSV.
 
 Praticamente todo gráfico permite escolher o tipo de visualização (Barras, Barras Horizontais, Pizza, Rosca, Linha, Área, Treemap, Pareto, Funil, Mapa de Calor, Radar preenchido — conforme fizer sentido para os dados daquele indicador). A paleta de cores foi desenhada especificamente para que categorias vizinhas num mesmo gráfico nunca fiquem com tons parecidos, mesmo em gráficos com poucas categorias.
+
+### Scrum & Sprints
+
+Página própria (menu lateral → "🏃 Scrum & Sprints"), **visível para qualquer pessoa logada** (admin ou convidado) — pensada como ferramenta de observabilidade de fluxo/ritmo de sprint para uma Scrum Master, separada do restante dos indicadores de qualidade de testes. Usa os mesmos filtros da barra lateral do Dashboard (Período/Projeto/Sprint/Tipos de Teste/Status — o filtro escolhido numa página continua aplicado na outra) e, por padrão, conta só itens de ENTREGA do Scrum (User Story, Bug, Task, Feature, Spike etc.) — artefatos de organização/execução de QA (Test Case, Test Plan, Test Suite, Shared Steps/Parameter) ficam fora por padrão, ajustável num expansor de escopo.
+
+**Fonte de dados própria (Organização/Projeto/Area Path)**: por padrão, a página usa o mesmo arquivo/dados já importados em "Importar Dados" (o mesmo do Dashboard). O expansor **"🔎 Fonte de dados desta página"**, no topo, permite trocar isso: escolhendo "Buscar direto no Azure DevOps (só para esta página)", a página ganha sua PRÓPRIA busca por PAT (Organização → Projeto → Area Path(s) opcional → Query), igual à que já existe em "Importar Dados", mas com resultado isolado — vale só para "Scrum & Sprints"; o Dashboard e o resto do app continuam mostrando o que já estiver importado, sem nenhuma mudança. Útil quando o arquivo/busca geral do app mistura work items de vários Projetos/Area Paths e a Scrum Master precisa olhar só o dela. O PAT já colado em "Importar Dados" (se algum) é reaproveitado como valor inicial aqui, por conveniência, mas a partir daí os dois campos de PAT são completamente independentes.
+
+- **KPIs**: WIP Total (itens em aberto), Idade Média do WIP, Itens Criados nas últimas semanas e, quando Sprint tem variedade real de valores (ver abaixo), Concluídos no Sprint Mais Recente e, quando Story Points está mapeado, Velocity Média (Story Points/Sprint) — com a cobertura do campo exibida junto.
+- **Itens Concluídos por Sprint** — mesma métrica que já existia no Dashboard geral, movida pra cá. Velocity por CONTAGEM de itens, não depende de Story Points.
+- **Velocity por Story Points (Sprint)** — a Velocity clássica do Scrum: soma de Story Points dos itens concluídos em cada sprint. Só aparece quando o arquivo tem Story Points mapeado; como esse campo é preenchido manualmente pelo time (planejamento/refinamento no Azure DevOps), a página mostra um aviso explícito sempre que a cobertura do campo estiver baixa no período/filtro atual, para que o número não seja lido como "o time entregou pouco esforço" quando na verdade é "a maioria dos itens não tem esforço estimado registrado".
+- **Itens Criados por Semana** — volume de entrada de trabalho no fluxo (inflow).
+- **Mix de Tipos de Trabalho em Aberto** — do que é feito o WIP atual (Story/Bug/Task/...).
+- **WIP Atual por Coluna do Board** — onde estão, agora, os itens ainda não concluídos, na ordem real do fluxo.
+- **Onde o Trabalho Está Parado: Volume × Idade × Risco, por Coluna do Board** — gráfico de bolha (mesma mecânica do "Backlog Aberto" do Dashboard, agrupado por Coluna do Board em vez de Area Path/Responsável).
+- **Carga de Trabalho em Aberto por Responsável** — quem tem quanto em aberto agora (sobrecarga concentrada).
+
+**Sobre Burndown/Burnup/Cumulative Flow Diagram (CFD)**: esses indicadores clássicos de Scrum **não estão** nesta página, de propósito — todos exigem um HISTÓRICO dia a dia (quanto trabalho restava em cada dia, ou quantos itens estavam em cada coluna a cada dia), e este app importa um retrato ÚNICO e atual dos work items a cada consulta, sem guardar snapshots diários. Construir esses gráficos mesmo assim produziria a forma certa com o conteúdo errado — os demais indicadores da página (WIP atual, mix de tipos, aging por coluna, carga por responsável, inflow semanal) respondem à mesma pergunta de fundo ("o fluxo está saudável, ou empacado em algum lugar?") a partir do estado ATUAL, que é o que os dados disponíveis permitem calcular com segurança. Trazer esse histórico exigiria importar dados do serviço de Analytics do Azure DevOps (OData, entidades `WorkItemSnapshot`/`WorkItemBoardSnapshot`) em vez do export de estado atual usado hoje — uma fonte de dados nova, não uma coluna a mais no arquivo atual.
+
+**Sobre Story Points e a Velocity clássica**: ver "Velocity por Story Points (Sprint)" acima. Diferente de Burndown/CFD, este indicador só depende de uma coluna que pode faltar no arquivo (e que já foi adicionada no export usado neste projeto) — por isso está disponível assim que Story Points estiver mapeado, sujeito ao aviso de cobertura quando o campo estiver pouco preenchido.
+
+**Sobre o campo Sprint**: vem do campo mapeado como Sprint (tipicamente "Iteration Path" no Azure DevOps). Se esse campo tiver o MESMO valor em todo o arquivo (comum quando o Team Project não quebra o trabalho em iterations de verdade, só usa um board Kanban), o gráfico "Itens Concluídos por Sprint" fica oculto — mostraria uma única barra sem significado real — com uma explicação no expansor "Sobre os dados de Sprint nesta página" de como corrigir (a query/configuração de Iteration no Azure DevOps precisa referenciar o sprint específico de cada item). Os demais indicadores da página não dependem de Sprint real.
 
 ### Construtor de gráfico personalizado
 
@@ -191,10 +212,14 @@ core/
 ui/
   components.py                # componentes reutilizáveis (cabeçalho, overlay de loading, botão anti-clique-duplo...)
   theme.py                     # cores, paletas e CSS global
+  graficos.py                  # infra de gráficos compartilhada (dispatcher de "Tipo de gráfico", Pareto/Mapa de Calor/Bolha, FilaGraficos) - Dashboard e Scrum & Sprints
+  filtros_dashboard.py         # filtros da barra lateral (Período/Projeto/Sprint/Tipos de Teste/Status) compartilhados entre as duas páginas acima
+  busca_azure_devops.py        # UI de busca por PAT (Organização/Projeto/Area Path/Query) reaproveitada, com estado isolado por namespace, em Importar Dados E na busca própria de Scrum & Sprints
   pages/
     login_page.py
     upload_page.py
     dashboard_page.py
+    scrum_page.py               # página "Scrum & Sprints" (ver README, seção própria)
     admin_page.py
     sobre_page.py               # página "Sobre o App" + Guia do Usuário (ver README, seção própria)
 utils/

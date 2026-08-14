@@ -36,12 +36,13 @@ Se você só precisa saber como usar o dashboard no dia a dia (sem as funções 
 
 ## 2. Navegação geral
 
-Depois de logado, a barra lateral esquerda mostra quatro botões (você é a única pessoa que vê o último):
+Depois de logado, a barra lateral esquerda mostra cinco botões (você é a única pessoa que vê o penúltimo):
 
 - **📥 Importar Dados** — tela inicial, para trazer um arquivo de testes para dentro do app.
 - **📊 Indicadores** — o dashboard em si, com todos os gráficos.
-- **ℹ️ Sobre o App** — a mesma explicação visual que qualquer usuário vê, mais um resumo do que existe do lado da Administração (para você, sempre expandido; para quem não é admin, escondido por padrão — ver seção 4).
+- **🏃 Scrum & Sprints** — área dedicada a indicadores de fluxo, ritmo de entrega e trabalho em andamento (WIP), pensada para observabilidade de Scrum/Sprints. Visível para qualquer pessoa logada, não só para admin.
 - **⚙️ Administração** — o Painel Administrativo (só admin).
+- **ℹ️ Sobre o App** — a mesma explicação visual que qualquer usuário vê, mais um resumo do que existe do lado da Administração (para você, sempre expandido; para quem não é admin, escondido por padrão — ver seção 4).
 
 O botão da página em que você está fica destacado em laranja. Mais abaixo na barra lateral aparece o botão **🔄 Nova Análise** (só depois de já ter importado algum arquivo) e, por último, **Sair**.
 
