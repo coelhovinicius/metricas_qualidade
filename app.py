@@ -45,7 +45,7 @@ ASSETS_DIR = Path(__file__).parent / "assets"
 def _configurar_pagina() -> None:
     icone_path = ASSETS_DIR / "simbolo_refuturiza.png"
     st.set_page_config(
-        page_title="Refuturiza · Indicadores de Qualidade",
+        page_title="Indicadores - QA",
         page_icon=str(icone_path) if icone_path.exists() else "📊",
         layout="wide",
         initial_sidebar_state="collapsed",
@@ -60,7 +60,7 @@ def _renderizar_sidebar_navegacao(auth_manager: AuthManager) -> None:
             f"""
             <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
                 <img src="data:image/png;base64,{simbolo_b64}" style="height:34px;" />
-                <span style="font-weight:700;font-size:1.05rem;">Refuturiza QA</span>
+                <span style="font-weight:700;font-size:1.05rem;">Indicadores - QA</span>
             </div>
             """,
             unsafe_allow_html=True,
