@@ -76,7 +76,7 @@ USUARIO_ADMIN = "admin"
 # formulário de solicitação de conta), pra nunca aparecer a opção de revogar
 # o seu próprio acesso sem querer. Comparação é case-insensitive.
 EMAILS_PROTEGIDOS_DE_REVOGACAO: set[str] = {
-    # "seu-email@refuturiza.com",
+    # "seu-email@empresa.com",
 }
 
 

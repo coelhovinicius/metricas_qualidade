@@ -1,5 +1,5 @@
 """
-Refuturiza · Painel de Indicadores de Qualidade de Testes
+Painel de Indicadores de Qualidade de Testes
 ============================================================
 
 Aplicação Streamlit para importar arquivos de execução de testes (CSV/TXT)

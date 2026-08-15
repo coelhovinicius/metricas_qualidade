@@ -7,7 +7,7 @@ Sprint, em Scrum & Sprints).
 
 Por que via n8n em vez de chamar uma API de IA (Anthropic/OpenAI/etc.)
 diretamente daqui: a decisao foi reaproveitar um fluxo n8n que a propria
-Refuturiza ja mantem, com as chaves/creditos de IA que ja usam noutros
+equipe ja mantem, com as chaves/creditos de IA que ja usam noutros
 projetos - sem duplicar gerenciamento de chave de API dentro deste app. Este
 cliente so envia os dados do grafico para uma URL de webhook do n8n (via
 POST) e devolve o texto de analise que o fluxo do n8n responder; qual modelo

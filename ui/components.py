@@ -1,7 +1,7 @@
 """
 Componentes de interface reutilizáveis:
 
-    - `render_header`: cabeçalho com a logo Refuturiza;
+    - `render_header`: cabeçalho com a logo do painel;
     - `loading_overlay`: context manager que escurece a tela e bloqueia
       interação enquanto uma operação pesada está em andamento, exibindo
       "Carregando, aguarde...";
@@ -32,7 +32,7 @@ def render_header(titulo: str, subtitulo: str = "") -> None:
     logo_path = ASSETS_DIR / "logo_refuturiza.png"
     if logo_path.exists():
         logo_b64 = _imagem_para_base64(logo_path)
-        logo_html = f'<img src="data:image/png;base64,{logo_b64}" alt="Refuturiza" />'
+        logo_html = f'<img src="data:image/png;base64,{logo_b64}" alt="Logo do painel" />'
     else:
         logo_html = ""
 

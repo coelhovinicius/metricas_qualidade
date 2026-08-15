@@ -266,7 +266,7 @@ def gerar_pdf_relatorio(
         rightMargin=MARGEM,
         topMargin=MARGEM,
         bottomMargin=MARGEM,
-        title="Relatório de Indicadores de Qualidade - Refuturiza QA",
+        title="Relatório de Indicadores de Qualidade",
     )
 
     elementos: list = []
@@ -284,7 +284,7 @@ def gerar_pdf_relatorio(
             pass
 
     elementos.append(Paragraph("Relatório de Indicadores de Qualidade", estilos["titulo_capa"]))
-    elementos.append(Paragraph("Refuturiza QA", estilos["subtitulo_capa"]))
+    elementos.append(Paragraph("Indicadores - QA", estilos["subtitulo_capa"]))
     elementos.append(Spacer(1, 10))
 
     agora = agora_brasilia().strftime("%d/%m/%Y às %H:%M")
@@ -312,7 +312,7 @@ def gerar_pdf_relatorio(
     elementos.append(Spacer(1, 16))
     elementos.append(
         Paragraph(
-            "Gerado automaticamente pelo painel Refuturiza QA. Não inclui conteúdo de "
+            "Gerado automaticamente pelo painel Indicadores - QA. Não inclui conteúdo de "
             "expansores recolhidos na tela (ex.: tabela de dados detalhados, "
             "detalhamento de itens sem Coluna do Board).",
             estilos["rodape"],

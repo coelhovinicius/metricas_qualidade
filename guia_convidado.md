@@ -1,4 +1,4 @@
-# Guia do Usuário — Refuturiza QA
+# Guia do Usuário — Indicadores - QA
 
 Este guia é para quem usa o painel como **usuário comum** (sem acesso ao Painel Administrativo, que é exclusivo do administrador). Ele cobre desde pedir acesso, até importar dados, navegar pelo dashboard e gerar o relatório em PDF.
 

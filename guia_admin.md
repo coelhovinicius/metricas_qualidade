@@ -1,4 +1,4 @@
-# Guia do Administrador — Refuturiza QA
+# Guia do Administrador — Indicadores - QA
 
 Este guia é para quem faz login como **administrador** (usuário `admin`). Ele cobre tudo que um usuário comum já pode fazer (importar dados, navegar pelo dashboard, gerar PDF) **e** as funções extras que só o administrador enxerga: o Painel Administrativo completo.
 

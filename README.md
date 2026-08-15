@@ -1,4 +1,4 @@
-# Refuturiza QA — Painel de Indicadores de Qualidade
+# Indicadores - QA — Painel de Indicadores de Qualidade
 
 Aplicação web (Streamlit) que transforma work items do Azure DevOps — importados manualmente em CSV/TXT, buscados direto pela API, ou buscados de uma pasta compartilhada no Google Drive — em um painel de indicadores e gráficos interativos sobre o trabalho de QA: volume de testes, bugs em aberto, backlog envelhecido, fluxo no board Kanban, ritmo por sprint e ritmo de trabalho por responsável e por projeto. Também gera um relatório completo em PDF, pronto para anexar num e-mail ou guardar como registro de um período.
 
