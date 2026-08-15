@@ -71,27 +71,72 @@ def _focar_campo_usuario() -> None:
     lib `streamlit-authenticator` (não por este código), então o campo é
     localizado de forma genérica - primeiro campo de texto dentro do
     formulário (`div[data-testid="stForm"]`) - em vez de depender de algum
-    id/classe interna dela. Tenta por até ~2s (20 tentativas de 100ms) caso o
-    formulário ainda não tenha terminado de aparecer no DOM no instante em
-    que o script roda.
+    id/classe interna dela.
+
+    Bug já visto ao vivo (gravação de tela do usuário): a primeira versão
+    tentava um número FIXO de vezes (20 tentativas de 100ms = ~2s) e desistia
+    de vez se não achasse o formulário nesse prazo. Isso falhava sempre que o
+    app levava mais que ~2s pra desenhar a tela - o que é comum de verdade no
+    Streamlit Community Cloud quando o app estava "dormindo" e precisa
+    "acordar" (cold start), caso em que a tela pode demorar bem mais que 2s
+    pra aparecer. Resultado: o cursor nunca ia pro campo, e a pessoa
+    precisava clicar manualmente - exatamente o que esse recurso deveria
+    evitar. Corrigido trocando o polling de tentativas fixas por um
+    `MutationObserver`, que reage assim que o formulário for inserido no DOM,
+    não importa quanto tempo isso demore (com um `setTimeout` de 30s só como
+    rede de segurança, pra não ficar observando pra sempre se o formulário,
+    por algum motivo, nunca aparecer). Também não rouba o foco se a pessoa já
+    tiver clicado em algum campo de texto/senha enquanto a tela ainda estava
+    carregando - só foca automaticamente se nada mais já estiver focado.
     """
     components.html(
         """
         <script>
         (function() {
-            function focarCampoUsuario(tentativasRestantes) {
-                var doc = window.top.document;
+            var doc = window.top.document;
+            var resolvido = false;
+
+            function focarSeAinda() {
+                if (resolvido) return true;
+
+                // Não rouba o foco se a pessoa já começou a interagir com a
+                // página (ex.: já clicou em algum campo) enquanto o app
+                // ainda estava carregando.
+                var ativo = doc.activeElement;
+                if (ativo && (ativo.tagName === 'INPUT' || ativo.tagName === 'TEXTAREA')) {
+                    resolvido = true;
+                    return true;
+                }
+
                 var formulario = doc.querySelector('div[data-testid="stForm"]');
-                var campo = formulario ? formulario.querySelector('input[type="text"], input:not([type])') : null;
+                var campo = formulario
+                    ? formulario.querySelector('input[type="text"], input:not([type])')
+                    : null;
                 if (campo) {
                     campo.focus();
-                    return;
+                    resolvido = true;
+                    return true;
                 }
-                if (tentativasRestantes > 0) {
-                    setTimeout(function() { focarCampoUsuario(tentativasRestantes - 1); }, 100);
-                }
+                return false;
             }
-            focarCampoUsuario(20);
+
+            if (focarSeAinda()) return;
+
+            // Formulário ainda não existe no DOM (cold start do Streamlit
+            // Community Cloud pode levar bem mais que alguns segundos até a
+            // tela inteira aparecer) - observa o <body> até o formulário ser
+            // inserido, em vez de tentar um número fixo de vezes por um
+            // tempo fixo (que é o que falhava em cold starts lentos).
+            var observador = new MutationObserver(function() {
+                if (focarSeAinda()) {
+                    observador.disconnect();
+                }
+            });
+            observador.observe(doc.body, {childList: true, subtree: true});
+
+            // Rede de segurança: para de observar depois de 30s, pra nunca
+            // ficar rodando pra sempre se o formulário nunca aparecer.
+            setTimeout(function() { observador.disconnect(); }, 30000);
         })();
         </script>
         """,
