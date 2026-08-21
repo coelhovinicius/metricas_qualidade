@@ -39,6 +39,8 @@ from core.logs_sistema import (
     listar_logs,
     registrar_log,
 )
+from core.glpi_client import GlpiError
+from core.glpi_client import testar_conexao as testar_conexao_glpi
 from core.solicitacoes_conta import (
     STATUS_CRIADA,
     STATUS_PENDENTE,
@@ -51,6 +53,11 @@ from core.solicitacoes_conta import (
     testar_conexao,
 )
 from core.turso_client import TursoError
+from core.usuarios_autorizados_glpi import (
+    adicionar_usuario_autorizado,
+    listar_usuarios_autorizados,
+    remover_usuario_autorizado,
+)
 from ui.components import action_button, finish_action, loading_overlay, render_header
 
 # Rótulo (em português, pronto pra exibir) de cada mudança de status possível
@@ -182,8 +189,11 @@ def render_admin_page() -> None:
     # (regerar o PDF de "Sobre o App" sem precisar de terminal/VSCode, ver
     # `_renderizar_secao_guia_pdf`) são assuntos distintos no dia a dia,
     # mesmo as duas primeiras usando o mesmo banco (Turso).
-    aba_solicitacoes, aba_logs, aba_drive, aba_guia = st.tabs(
-        ["📋 Solicitações de Acesso", "🗒️ Logs do Sistema", "📁 Google Drive", "📘 Guia do Usuário"]
+    aba_solicitacoes, aba_logs, aba_drive, aba_glpi, aba_guia = st.tabs(
+        [
+            "📋 Solicitações de Acesso", "🗒️ Logs do Sistema", "📁 Google Drive",
+            "🔗 Integração GLPI", "📘 Guia do Usuário",
+        ]
     )
 
     with aba_solicitacoes:
@@ -194,6 +204,9 @@ def render_admin_page() -> None:
 
     with aba_drive:
         _renderizar_secao_google_drive()
+
+    with aba_glpi:
+        _renderizar_secao_integracao_glpi()
 
     with aba_guia:
         _renderizar_secao_guia_pdf()
@@ -724,6 +737,109 @@ def _renderizar_secao_google_drive() -> None:
                 st.error(str(erro_teste))
             else:
                 st.success("Credencial da conta de serviço válida - a API do Google Drive respondeu normalmente.")
+
+
+def _renderizar_secao_integracao_glpi() -> None:
+    """
+    Aba "🔗 Integração GLPI": gerencia quem, além de você (admin), pode
+    acessar a área "Integração GLPI x Azure DevOps" do menu lateral (ver
+    `core/usuarios_autorizados_glpi.py` e `ui/pages/integracao_glpi_page.py`),
+    e um diagnóstico rápido da conexão com a API do GLPI (mesmo padrão já
+    usado para Turso/Google Drive acima).
+    """
+    with st.expander("Diagnóstico da conexão com o GLPI"):
+        st.caption(
+            "Confere se a seção [glpi] (url_base, app_token, user_token) está configurada nos "
+            "Secrets e se a API REST do GLPI está respondendo."
+        )
+        if action_button("Testar conexão", key="btn_testar_conexao_glpi"):
+            with loading_overlay("Testando conexão, aguarde..."):
+                try:
+                    testar_conexao_glpi()
+                except GlpiError as erro:
+                    erro_teste: Optional[GlpiError] = erro
+                else:
+                    erro_teste = None
+            finish_action("btn_testar_conexao_glpi")
+            if erro_teste:
+                st.error(str(erro_teste))
+            else:
+                st.success("Conexão com o GLPI funcionando normalmente.")
+
+    st.markdown("#### Usuários autorizados (além de você)")
+    st.caption(
+        "Digite o **username de login** deste app (o mesmo usado para entrar - não é e-mail "
+        "nem nome de exibição) de cada pessoa que deve enxergar \"🔗 Integração GLPI\" no menu "
+        "lateral dela. Você (admin) sempre tem acesso, esteja ou não nesta lista."
+    )
+
+    col_input, col_botao = st.columns([3, 1])
+    with col_input:
+        novo_username = st.text_input(
+            "Username de login para autorizar",
+            key="input_novo_usuario_autorizado_glpi",
+            placeholder="ex.: joao.silva",
+            label_visibility="collapsed",
+        )
+    with col_botao:
+        adicionar = action_button(
+            "➕ Adicionar", key="btn_adicionar_usuario_autorizado_glpi", use_container_width=True,
+        )
+
+    if adicionar:
+        username_limpo = novo_username.strip()
+        if not username_limpo:
+            st.warning("Digite um username antes de adicionar.")
+            finish_action("btn_adicionar_usuario_autorizado_glpi")
+        else:
+            with loading_overlay("Salvando, aguarde..."):
+                try:
+                    adicionar_usuario_autorizado(username_limpo, AuthManager.current_username())
+                except TursoError as erro:
+                    erro_salvar: Optional[TursoError] = erro
+                else:
+                    erro_salvar = None
+                    registrar_log(
+                        TIPO_PAINEL, AuthManager.current_username(),
+                        f"Autorizou '{username_limpo}' a acessar a Integração GLPI",
+                    )
+            finish_action("btn_adicionar_usuario_autorizado_glpi")
+            if erro_salvar:
+                st.error(str(erro_salvar))
+            else:
+                st.success(f"'{username_limpo}' autorizado.")
+                st.rerun()
+
+    try:
+        autorizados = listar_usuarios_autorizados()
+    except TursoError as erro:
+        st.error(str(erro))
+        return
+
+    if not autorizados:
+        st.caption("Nenhum usuário extra autorizado ainda - só você (admin) tem acesso a esta área.")
+        return
+
+    for usuario in autorizados:
+        with st.container(border=True):
+            col_info, col_remover = st.columns([3, 1])
+            with col_info:
+                st.markdown(f"**{usuario.username}**")
+                rodape = f"Autorizado em {formatar_data_hora_brasil(usuario.criado_em)}"
+                if usuario.adicionado_por:
+                    rodape += f" por {usuario.adicionado_por}"
+                st.caption(rodape)
+            with col_remover:
+                if st.button(
+                    "🗑️ Remover", key=f"remover_autorizado_glpi_{usuario.id}", use_container_width=True,
+                ):
+                    with loading_overlay("Removendo, aguarde..."):
+                        remover_usuario_autorizado(usuario.id)
+                        registrar_log(
+                            TIPO_PAINEL, AuthManager.current_username(),
+                            f"Removeu a autorização de '{usuario.username}' na Integração GLPI",
+                        )
+                    st.rerun()
 
 
 def _renderizar_secao_guia_pdf() -> None:

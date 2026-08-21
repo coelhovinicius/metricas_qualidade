@@ -32,6 +32,7 @@ from ui.components import action_button, finish_action, loading_overlay, rolar_p
 from ui.novidades import renderizar_modal_novidades_se_necessario
 from ui.pages.admin_page import render_admin_page, usuario_e_admin
 from ui.pages.dashboard_page import render_dashboard_page
+from ui.pages.integracao_glpi_page import render_integracao_glpi_page, usuario_pode_acessar as usuario_pode_acessar_glpi
 from ui.pages.login_page import render_login_page
 from ui.pages.scrum_page import render_scrum_page
 from ui.pages.sobre_page import render_sobre_page
@@ -79,6 +80,12 @@ def _renderizar_sidebar_navegacao(auth_manager: AuthManager) -> None:
         # pode não ter (nem precisar de) acesso administrativo ao app.
         "scrum": "🏃 Scrum & Sprints",
     }
+    # Visível pro admin e para quem ele autorizar especificamente (ver
+    # `core/usuarios_autorizados_glpi.py`) - diferente de "scrum"/"sobre"
+    # acima, esta área NÃO é para qualquer pessoa logada: só quem administra
+    # (ou foi liberado) mexe com a integração GLPI x Azure DevOps.
+    if usuario_pode_acessar_glpi(auth_manager.current_username()):
+        paginas["integracao_glpi"] = "🔗 GLPI x Azure DevOps"
     if usuario_e_admin(auth_manager.current_username()):
         paginas["admin"] = "⚙️ Administração"
     # Visível pra QUALQUER pessoa logada (não só o admin) - sempre por
@@ -220,6 +227,8 @@ def main() -> None:
             render_upload_page()
         elif pagina_atual == "admin" and usuario_e_admin(auth_manager.current_username()):
             render_admin_page()
+        elif pagina_atual == "integracao_glpi" and usuario_pode_acessar_glpi(auth_manager.current_username()):
+            render_integracao_glpi_page()
         elif pagina_atual == "sobre":
             render_sobre_page()
         elif pagina_atual == "scrum":

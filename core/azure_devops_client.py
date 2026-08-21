@@ -527,6 +527,27 @@ def _montar_dataframe(itens_api: list[dict]) -> pd.DataFrame:
     return df
 
 
+def listar_tipos_work_item(organization: str, project: str, pat: str) -> list[str]:
+    """
+    Lista os nomes dos tipos de Work Item disponíveis no processo configurado
+    para este projeto (ex.: "User Story", "Bug", "Task", "Issue" - varia
+    conforme o processo do Azure DevOps da organização: Agile/Scrum/Basic/
+    CMMI). Usado para popular o dropdown de "que tipo de Work Item criar" na
+    Integração GLPI x Azure DevOps, em vez de fixar um tipo só no código.
+    """
+    if not all([organization, project, pat]):
+        raise AzureDevOpsError("Organização, projeto e PAT são obrigatórios para listar os tipos de Work Item.")
+    url = f"https://dev.azure.com/{organization}/{project}/_apis/wit/workitemtypes?api-version={API_VERSION}"
+    corpo = _get(url, pat)
+    nomes = [item["name"] for item in corpo.get("value", []) if item.get("name") and not item.get("isDisabled")]
+    return sorted(nomes)
+
+
+def _escapar_valor_wiql(valor: str) -> str:
+    """WIQL usa aspas simples para strings - uma aspa simples dentro do valor precisa virar duas."""
+    return valor.replace("'", "''")
+
+
 def buscar_work_items_da_query(
     organization: str, project: str, query_id: str, pat: str
 ) -> pd.DataFrame:
@@ -550,3 +571,161 @@ def buscar_work_items_da_query(
     itens_api = _buscar_campos_em_lotes(organization, ids, pat)
     itens_api = _completar_board_column_via_item_pai(organization, itens_api, pat)
     return _montar_dataframe(itens_api)
+
+
+# ---------------------------------------------------------------------------
+# Escrita (criação de Work Items) - usado pela Integração GLPI x Azure DevOps
+# (ver `ui/pages/integracao_glpi_page.py`). Tudo acima deste ponto no arquivo
+# é só LEITURA; esta seção é a única parte do cliente que grava algo no Azure
+# DevOps de verdade.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ResultadoCriacaoWorkItem:
+    id: int
+    url_html: str
+    atribuicao_aplicada: bool  # False quando o e-mail de responsável foi ignorado (ver `criar_work_item`)
+
+
+@dataclass
+class ItemExistenteBoard:
+    """Título + descrição (HTML cru) de um work item já existente num board - ver `listar_itens_existentes_no_board`."""
+    titulo: str
+    descricao_html: str
+
+
+def listar_itens_existentes_no_board(
+    organization: str, project: str, area_path: str, pat: str
+) -> list[ItemExistenteBoard]:
+    """
+    Devolve título + descrição de todos os work items que já existem hoje no
+    Area Path informado (comparação EXATA, não recursiva - não inclui
+    sub-caminhos). Usado por `ui/pages/integracao_glpi_page.py` para dois
+    níveis de deduplicação:
+
+    1) Título EXATO (chave = "Chamado {id}"/"Problema {id}") - o item já foi
+       integrado antes, ponto final, não é oferecido de novo.
+    2) Conteúdo PARECIDO (comparação de texto entre a descrição deste item e
+       a do chamado/problema novo, via `difflib` - ver
+       `_encontrar_conteudo_parecido` em `ui/pages/integracao_glpi_page.py`)
+       - sinaliza uma possível duplicata mesmo com título/ID diferente (ex.:
+       dois Problemas do GLPI abertos por engano para o mesmo assunto).
+    """
+    if not all([organization, project, area_path, pat]):
+        raise AzureDevOpsError(
+            "Organização, projeto, Area Path e PAT são obrigatórios para conferir os itens já existentes."
+        )
+
+    wiql = (
+        "SELECT [System.Id] FROM WorkItems WHERE "
+        f"[System.TeamProject] = '{_escapar_valor_wiql(project)}' "
+        f"AND [System.AreaPath] = '{_escapar_valor_wiql(area_path)}'"
+    )
+    url = f"https://dev.azure.com/{organization}/{project}/_apis/wit/wiql?api-version={API_VERSION}"
+    try:
+        resposta = requests.post(url, auth=_autenticacao(pat), json={"query": wiql}, timeout=TIMEOUT_SEGUNDOS)
+    except requests.RequestException as exc:
+        raise AzureDevOpsError(f"Não foi possível conectar ao Azure DevOps: {exc}") from exc
+    _tratar_erro_http(resposta)
+    corpo = _decodificar_json(resposta)
+    ids = [item["id"] for item in corpo.get("workItems", []) if "id" in item]
+
+    if not ids:
+        return []
+
+    itens_api = _buscar_campos_em_lotes(organization, ids, pat, campos=["System.Title", "System.Description"])
+    resultado: list[ItemExistenteBoard] = []
+    for item in itens_api:
+        campos = item.get("fields", {})
+        titulo = campos.get("System.Title")
+        if not titulo:
+            continue
+        resultado.append(ItemExistenteBoard(titulo=titulo, descricao_html=campos.get("System.Description") or ""))
+    return resultado
+
+
+def criar_work_item(
+    organization: str,
+    project: str,
+    area_path: str,
+    work_item_type: str,
+    title: str,
+    description_html: str,
+    tags: list[str],
+    pat: str,
+    assigned_to_email: Optional[str] = None,
+) -> ResultadoCriacaoWorkItem:
+    """
+    Cria um Work Item novo no Azure DevOps (POST, JSON Patch - a única
+    operação de ESCRITA deste cliente). `work_item_type` é o nome exato do
+    tipo já configurado no processo do projeto (ex.: "User Story", "Bug",
+    "Issue", "Task") - este cliente não valida se o tipo existe; um nome
+    inválido faz o próprio Azure DevOps devolver um 404/400, traduzido para
+    `AzureDevOpsError` como qualquer outro erro.
+
+    `assigned_to_email`, se informado, tenta atribuir o item a essa conta
+    (e-mail/UPN) já na criação. Como nem sempre esse e-mail corresponde a uma
+    conta válida no Azure DevOps da organização (ex.: o técnico do GLPI não
+    tem conta lá, ou usa um e-mail diferente), a criação NUNCA falha só por
+    causa disso: se o Azure DevOps rejeitar especificamente por causa do
+    campo Assigned To, o item é recriado sem esse campo, e
+    `atribuicao_aplicada=False` avisa o chamador para mostrar isso na tela
+    (ver `ui/pages/integracao_glpi_page.py`) - só um erro de qualquer OUTRO
+    tipo (rede, permissão, Area Path/tipo inválido) continua estourando
+    `AzureDevOpsError` de verdade.
+    """
+    if not all([organization, project, area_path, work_item_type, title, pat]):
+        raise AzureDevOpsError(
+            "Organização, projeto, Area Path, tipo de Work Item, título e PAT são "
+            "obrigatórios para criar um Work Item."
+        )
+
+    def _montar_patch(incluir_atribuicao: bool) -> list[dict]:
+        patch = [
+            {"op": "add", "path": "/fields/System.Title", "value": title},
+            {"op": "add", "path": "/fields/System.AreaPath", "value": area_path},
+        ]
+        if description_html:
+            patch.append({"op": "add", "path": "/fields/System.Description", "value": description_html})
+        if tags:
+            patch.append({"op": "add", "path": "/fields/System.Tags", "value": "; ".join(tags)})
+        if incluir_atribuicao and assigned_to_email:
+            patch.append({"op": "add", "path": "/fields/System.AssignedTo", "value": assigned_to_email})
+        return patch
+
+    def _enviar(patch: list[dict]) -> requests.Response:
+        url = (
+            f"https://dev.azure.com/{organization}/{project}/_apis/wit/workitems/"
+            f"${work_item_type}?api-version={API_VERSION}"
+        )
+        try:
+            return requests.post(
+                url,
+                auth=_autenticacao(pat),
+                headers={"Content-Type": "application/json-patch+json"},
+                json=patch,
+                timeout=TIMEOUT_SEGUNDOS,
+            )
+        except requests.RequestException as exc:
+            raise AzureDevOpsError(f"Não foi possível conectar ao Azure DevOps: {exc}") from exc
+
+    atribuicao_aplicada = bool(assigned_to_email)
+    resposta = _enviar(_montar_patch(incluir_atribuicao=True))
+
+    if assigned_to_email and resposta.status_code == 400:
+        # Melhor esforço: tenta de novo sem a atribuição, em vez de falhar a
+        # criação inteira só porque o e-mail do técnico do GLPI não bateu com
+        # nenhuma conta válida no Azure DevOps desta organização.
+        resposta_sem_atribuicao = _enviar(_montar_patch(incluir_atribuicao=False))
+        if resposta_sem_atribuicao.ok:
+            resposta = resposta_sem_atribuicao
+            atribuicao_aplicada = False
+
+    _tratar_erro_http(resposta)
+    corpo = _decodificar_json(resposta)
+    id_criado = corpo["id"]
+    url_html = corpo.get("_links", {}).get("html", {}).get("href") or (
+        f"https://dev.azure.com/{organization}/{project}/_workitems/edit/{id_criado}"
+    )
+    return ResultadoCriacaoWorkItem(id=id_criado, url_html=url_html, atribuicao_aplicada=atribuicao_aplicada)
